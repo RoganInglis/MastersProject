@@ -1,6 +1,7 @@
 import numpy as np
 from itertools import islice
 from preproc.map import numpify
+from numpy.random import choice
 #from jtr.util.rs import DefaultRandomState
 
 rs = np.random.RandomState(1337)
@@ -156,7 +157,36 @@ def get_batches(data, batch_size=32, pad=0, bucket_order=None, bucket_structure=
 
     return GeneratorWithRestart(bucket_generator)
 
-def get_feed_dicts(data, placeholders, batch_size=32, pad=0, bucket_order=None, bucket_structure=None, exact_epoch=False):
+
+def get_feed_dicts(data_train_np, placeholders, batch_size, inst_length):
+    # around 8 times faster as get_feed_dicts_old() with generator as it doesn't need to go over the whole training data every time during training
+    data_train_batched = []
+    realsamp = int(inst_length/batch_size)
+    additionsamp = inst_length%batch_size
+    if additionsamp != 0:
+        realsamp += 1
+    ids1 = choice(range(0, inst_length), inst_length-additionsamp, replace=False)  # sample without replacement so we get every sample once
+    ids2 = choice(range(0, inst_length), additionsamp, replace=True)  # sample a few additional ones to fill up batch
+    ids = np.append(ids1, ids2)
+
+    start = 0
+    for i in range(0, realsamp):
+        batch_i = {}
+        if i != 0:
+            start = i * batch_size
+        if i != realsamp:
+            ids_sup = ids[start:((i+1)*batch_size)]
+        else:
+            ids_sup = ids[start:realsamp]
+        for key, value in data_train_np.items():
+            batch_i[placeholders[key]] = [data_train_np[key][ii] for ii in ids_sup]
+
+        data_train_batched.append(batch_i)
+
+    return data_train_batched
+
+
+def get_feed_dicts_old(data, placeholders, batch_size=32, pad=0, bucket_order=None, bucket_structure=None, exact_epoch=False):
     """Creates feed dicts for all batches with a given batch size.
 
     Args:

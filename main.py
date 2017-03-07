@@ -1,5 +1,5 @@
 from preproc.vocab import Vocab
-from preproc.batch import get_batches, GeneratorWithRestart, get_feed_dicts
+from preproc.batch import get_batches, GeneratorWithRestart, get_feed_dicts, get_feed_dicts_old
 from preproc.map import numpify, tokenize, notokenize, lower, deep_map, deep_seq_map, dynamic_subsample, jtr_map_to_targets
 import tensorflow as tf
 import numpy as np
@@ -190,7 +190,8 @@ def train(train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=Non
 def load_data():
     train_data = dummy_data()
     train_data, vocab = prepare_data(train_data)
-    train_feed_dicts = get_feed_dicts(train_data, placeholders, batch_size=1, bucket_order=None, bucket_structure=None)
+    train_data = numpify(train_data, pad=0)  # padding to same length and converting lists to numpy arrays
+    train_feed_dicts = get_feed_dicts(train_data, placeholders, batch_size=2, inst_length=len(train_data["question"]))
     return train_feed_dicts, vocab
 
 
