@@ -25,7 +25,6 @@ def dummy_data(sentences=None):
     return data
 
 
-
 def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
     # [batch_size, max_seq1_length]
     question = placeholders['question']
@@ -49,7 +48,7 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
         varscope.reuse_variables()
         candidates_embedded = tf.nn.embedding_lookup(embeddings, candidates)
 
-    dim1s, dim2s, dim3s, dim4s = tf.unpack(
+    dim1s, dim2s, dim3s, dim4s = tf.unstack(
         tf.shape(support_embedded))  # [batch_size, num_supports, max_seq2_length, emb_dim]
 
     # iterate through all supports
@@ -81,7 +80,7 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
             outputs, states = reader(sup_batchi, sup_lens_batchi, emb_dim, seq1_states,
                                      scope=varscope2, drop_keep_prob=drop_keep_prob)
 
-        output = tf.concat(1, [states[0][1], states[1][1]])
+        output = tf.concat(axis=1, values=[states[0][1], states[1][1]])
 
         # squish back into emb_dim num dimensions
         output = tf.contrib.layers.linear(output, emb_dim)
@@ -99,12 +98,11 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
         [initial_i, initial_outputs])
 
     # packs along axis 0, there doesn't seem to be a way to change that (?)
-    outputs_logits = outputs.pack()  # [num_support, batch_size, num_cands]
+    outputs_logits = outputs.stack()  # [num_support, batch_size, num_cands]
     scores = tf.reduce_sum(outputs_logits, 0)
 
-    loss = tf.nn.softmax_cross_entropy_with_logits(scores, targets)
+    loss = tf.nn.softmax_cross_entropy_with_logits(logits=scores, labels=targets)
     predict = tf.nn.softmax(scores)
-
 
     return scores, loss, predict
 
@@ -126,14 +124,14 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         States (tensor): The cell states from the bi-LSTM.
     """
     with tf.variable_scope(scope or "reader") as varscope:
-        cell = tf.nn.rnn_cell.LSTMCell(
+        cell = tf.contrib.rnn.LSTMCell(
             output_size,
             state_is_tuple=True,
             initializer=tf.contrib.layers.xavier_initializer()
         )
 
         if drop_keep_prob != 1.0:
-            cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=drop_keep_prob)
+            cell = tf.contrib.rnn.DropoutWrapper(cell=cell, output_keep_prob=drop_keep_prob)
 
         outputs, states = tf.nn.bidirectional_dynamic_rnn(
             cell,
