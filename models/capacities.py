@@ -5,7 +5,8 @@ import tensorflow as tf
 import numpy as np
 import json
 
-
+"""
+CAN DELETE
 question = tf.placeholder(tf.int32, [None, None], name="question")
 question_lengths = tf.placeholder(tf.int32, [None], name="question_lengths")
 support = tf.placeholder(tf.int32, [None, None, None], name="support")
@@ -17,6 +18,8 @@ targets = tf.placeholder(tf.int32, [None, None], name="targets")
 
 placeholders = {"question": question, "question_lengths": question_lengths, "candidates": candidates, "support": support,
                 "support_lengths": support_lengths, "answers": answers, "targets": targets}
+CAN DELETE
+"""
 
 
 def dummy_data(sentences=None):
@@ -64,7 +67,7 @@ def process_data_dict(data_dict):
     return data
 
 
-def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
+def bicond_reader(placeholders, vocab_size, emb_dim, drop_keep_prob=1.0):
     # [batch_size, max_seq1_length]
     question = placeholders['question']
 
@@ -187,7 +190,7 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         # each [batch_size x max_seq_length x output_size]
         return outputs, states
 
-
+# TODO - Will eventually delete once everything is transferred
 def train(train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=None, clip_op=tf.clip_by_value, sess=None):
 
     # create model

@@ -3,7 +3,6 @@ from preproc.batch import get_batches, GeneratorWithRestart, get_feed_dicts, get
 from preproc.map import numpify, tokenize, notokenize, lower, deep_map, deep_seq_map, dynamic_subsample, jtr_map_to_targets
 import tensorflow as tf
 import numpy as np
-import json
 
 
 question = tf.placeholder(tf.int32, [None, None], name="question")
@@ -25,43 +24,6 @@ def dummy_data(sentences=None):
             "answers": ["lstm", "lstm"]}
     return data
 
-
-def full_data():
-    with open('data\\kbpLocal_train_pos.json', encoding='utf8') as data_file:
-        data_dict = json.load(data_file)
-    data = process_data_dict(data_dict)
-    #data = dummy_data()
-
-    return data
-
-
-def process_data_dict(data_dict):
-
-    # TODO - this could probably be sped up
-    instances_list = data_dict['instances']
-    data_list = []
-    for instance in instances_list:
-        instance_dict = {**instance['questions'][0], **{'support': instance['support']}}
-        for i, answers_instance in enumerate(instance_dict['answers']):
-            instance_dict['answers'][i] = answers_instance['text']
-
-        for j, candidates_instance in enumerate(instance_dict['candidates']):
-            instance_dict['candidates'][j] = candidates_instance['text']
-
-        for k, support_instance in enumerate(instance_dict['support']):
-            instance_dict['support'][k] = support_instance['text']
-
-        data_list.append(instance_dict)
-
-    # Convert list of dicts to dict of lists
-    data = {'question': [], 'candidates': [], 'support': [], 'answers': []}
-    for dict_instance in data_list:
-        data['question'].append(dict_instance['question'])
-        data['candidates'].append(dict_instance['candidates'][:])
-        data['support'].append(dict_instance['support'])
-        data['answers'].append(dict_instance['answers'][0])
-
-    return data
 
 
 def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
@@ -87,7 +49,7 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
         varscope.reuse_variables()
         candidates_embedded = tf.nn.embedding_lookup(embeddings, candidates)
 
-    dim1s, dim2s, dim3s, dim4s = tf.unstack(
+    dim1s, dim2s, dim3s, dim4s = tf.unpack(
         tf.shape(support_embedded))  # [batch_size, num_supports, max_seq2_length, emb_dim]
 
     # iterate through all supports
@@ -119,7 +81,7 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
             outputs, states = reader(sup_batchi, sup_lens_batchi, emb_dim, seq1_states,
                                      scope=varscope2, drop_keep_prob=drop_keep_prob)
 
-        output = tf.concat(axis=1, values=[states[0][1], states[1][1]])
+        output = tf.concat(1, [states[0][1], states[1][1]])
 
         # squish back into emb_dim num dimensions
         output = tf.contrib.layers.linear(output, emb_dim)
@@ -137,11 +99,12 @@ def bicond_reader(vocab_size, emb_dim, drop_keep_prob=1.0):
         [initial_i, initial_outputs])
 
     # packs along axis 0, there doesn't seem to be a way to change that (?)
-    outputs_logits = outputs.stack()  # [num_support, batch_size, num_cands]
+    outputs_logits = outputs.pack()  # [num_support, batch_size, num_cands]
     scores = tf.reduce_sum(outputs_logits, 0)
 
-    loss = tf.nn.softmax_cross_entropy_with_logits(logits=scores, labels=targets)
+    loss = tf.nn.softmax_cross_entropy_with_logits(scores, targets)
     predict = tf.nn.softmax(scores)
+
 
     return scores, loss, predict
 
@@ -163,14 +126,14 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         States (tensor): The cell states from the bi-LSTM.
     """
     with tf.variable_scope(scope or "reader") as varscope:
-        cell = tf.contrib.rnn.LSTMCell(
+        cell = tf.nn.rnn_cell.LSTMCell(
             output_size,
             state_is_tuple=True,
             initializer=tf.contrib.layers.xavier_initializer()
         )
 
         if drop_keep_prob != 1.0:
-            cell = tf.contrib.rnn.DropoutWrapper(cell=cell, output_keep_prob=drop_keep_prob)
+            cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, output_keep_prob=drop_keep_prob)
 
         outputs, states = tf.nn.bidirectional_dynamic_rnn(
             cell,
@@ -197,7 +160,7 @@ def train(train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=Non
     #optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
 
     if l2 != 0.0:
-        loss = loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * l2
+        loss += tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * l2
 
     if clip is not None:
         gradients = optim.compute_gradients(loss)
@@ -213,25 +176,20 @@ def train(train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=Non
 
     tf.global_variables_initializer().run(session=sess)
 
-    print('Training...')
     for i in range(1, max_epochs + 1):
         loss_all = []
         for j, batch in enumerate(train_feed_dicts):
             _, current_loss, p = sess.run([min_op, loss, preds], feed_dict=batch)
-            print(current_loss)
             loss_all.append(current_loss)
         print('Epoch %d :' % i, np.mean(loss_all))
     return logits, loss, preds
 
 
 def load_data():
-    #train_data = dummy_data()
-    train_data = full_data()
+    train_data = dummy_data()
     train_data, vocab = prepare_data(train_data)
-    # TODO get newer version of get_feed_dicts working
-    #train_feed_dicts = get_feed_dicts(train_data, placeholders, batch_size=1, bucket_order=None,
-    #                                     bucket_structure=None)
-    train_feed_dicts = get_feed_dicts_old(train_data, placeholders, batch_size=1, bucket_order=None, bucket_structure=None)
+    train_data = numpify(train_data, pad=0)  # padding to same length and converting lists to numpy arrays
+    train_feed_dicts = get_feed_dicts(train_data, placeholders, batch_size=2, inst_length=len(train_data["question"]))
     return train_feed_dicts, vocab
 
 
