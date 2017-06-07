@@ -249,6 +249,7 @@ def prepare_data(data, vocab=None):
             for sent in instance:
                 for token in sent:
                     vocab(token)
+    vocab.freeze()  # this makes sure that nothing further is added to the vocab, otherwise deep_map will extend it
     data = jtr_map_to_targets(data, 'candidates', 'answers')
     data_ids = deep_map(data, vocab, ["question", "candidates", "support", "answers"])
     data_ids = deep_seq_map(data_ids, lambda xs: len(xs), keys=['question', 'support'], fun_name='lengths', expand=True)
