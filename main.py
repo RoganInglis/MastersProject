@@ -34,6 +34,7 @@ flags.DEFINE_float('initial_mean', 0., 'Initial mean for NN')  # TODO - check wh
 flags.DEFINE_float('initial_stddev', 1e-2, 'Initial standard deviation for NN')
 flags.DEFINE_float('learning_rate', 1e-3, 'The learning rate of SGD')
 flags.DEFINE_float('drop_keep_prob', 1e-3, 'The dropout keep probability')
+flags.DEFINE_float('l2', 0.0, 'L2 regularisation strength')
 
 
 # Training configuration

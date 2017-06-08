@@ -30,6 +30,7 @@ class BasicModel(object):
         self.max_iter = self.config['max_iter']
         self.drop_keep_prob = self.config['drop_keep_prob']
         self.learning_rate = self.config['learning_rate']
+        self.l2 = self.config['l2']
 
         # Now the child Model needs some custom parameters, to avoid any
         # inheritance hell with the __init__ function, the model

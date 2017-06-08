@@ -16,6 +16,11 @@ class ReinforceModel(BasicModel):
         # TODO - Implement this
 
     def build_graph(self, graph):
+        """
+        Defines the TensorFlow computation graph to be used later for training and inference
+        :param graph: TensorFlow graph e.g. tf.Graph()
+        :return: Nothing returned directly but several instance attributes that can later be used are defined
+        """
         tf.set_random_seed(self.random_seed)
 
         # Define placeholders
@@ -30,18 +35,18 @@ class ReinforceModel(BasicModel):
         # Define bicond reader model
         """
         need
-        train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=None, clip_op=tf.clip_by_value, sess=None
+        train_feed_dicts, vocab, max_epochs=1000 (may be able to use max_iter instead), emb_dim=64, clip=None, clip_op=tf.clip_by_value, sess=None
         """
 
         logits, loss, preds = capacities.bicond_reader(self.placeholders, len(vocab), emb_dim, drop_keep_prob=self.drop_keep_prob)
 
 
         # Add train step
-        optim = tf.train.AdamOptimizer(learning_rate=0.001)
+        optim = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         # optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
 
-        if l2 != 0.0:
-            loss = loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * l2
+        if self.l2 != 0.0:
+            loss = loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
 
         if clip is not None:
             gradients = optim.compute_gradients(loss)
