@@ -5,22 +5,6 @@ import tensorflow as tf
 import numpy as np
 import json
 
-"""
-CAN DELETE
-question = tf.placeholder(tf.int32, [None, None], name="question")
-question_lengths = tf.placeholder(tf.int32, [None], name="question_lengths")
-support = tf.placeholder(tf.int32, [None, None, None], name="support")
-support_lengths = tf.placeholder(tf.int32, [None, None], name="support_lengths")
-candidates = tf.placeholder(tf.int32, [None, None], name="candidates")
-answers = tf.placeholder(tf.int32, [None], name="answers")
-targets = tf.placeholder(tf.int32, [None, None], name="targets")
-
-
-placeholders = {"question": question, "question_lengths": question_lengths, "candidates": candidates, "support": support,
-                "support_lengths": support_lengths, "answers": answers, "targets": targets}
-CAN DELETE
-"""
-
 
 def dummy_data(sentences=None):
     data = {"question": ["method for task (qa, xxxxx)", "what method is used for qa"], "candidates": [["lstm", "lda", "reasoning"], ["lstm", "lda", "reasoning"]],
@@ -29,13 +13,26 @@ def dummy_data(sentences=None):
     return data
 
 
-def full_data():
-    with open('data\\kbpLocal_train_pos.json', encoding='utf8') as data_file:
+def full_data(file='data\\kbpLocal_train_pos.json'):
+    with open(file, encoding='utf8') as data_file:
         data_dict = json.load(data_file)
     data = process_data_dict(data_dict)
     #data = dummy_data()
 
     return data
+
+
+def combine_data(list_of_dicts):
+    if len(list_of_dicts) == 1:
+        return list_of_dicts[0]
+    else:
+        # Combine first 2 elements
+        new_list_of_dicts = list_of_dicts[1:]
+        for key in list_of_dicts[0]:
+            new_list_of_dicts[0][key].extend(list_of_dicts[1][key])
+
+        # Recurse
+        return combine_data(new_list_of_dicts)
 
 
 def process_data_dict(data_dict):
@@ -166,18 +163,25 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         States (tensor): The cell states from the bi-LSTM.
     """
     with tf.variable_scope(scope or "reader") as varscope:
-        cell = tf.contrib.rnn.LSTMCell(
+        cell_fw = tf.contrib.rnn.LSTMCell(
+            output_size,
+            state_is_tuple=True,
+            initializer=tf.contrib.layers.xavier_initializer()
+        )
+
+        cell_bw = tf.contrib.rnn.LSTMCell(
             output_size,
             state_is_tuple=True,
             initializer=tf.contrib.layers.xavier_initializer()
         )
 
         if drop_keep_prob != 1.0:
-            cell = tf.contrib.rnn.DropoutWrapper(cell=cell, output_keep_prob=drop_keep_prob)
+            cell_fw = tf.contrib.rnn.DropoutWrapper(cell=cell_fw, output_keep_prob=drop_keep_prob)
+            cell_bw = tf.contrib.rnn.DropoutWrapper(cell=cell_bw, output_keep_prob=drop_keep_prob)
 
         outputs, states = tf.nn.bidirectional_dynamic_rnn(
-            cell,
-            cell,
+            cell_fw,
+            cell_bw,
             inputs,
             sequence_length=lengths,
             initial_state_fw=contexts[0],
@@ -190,60 +194,72 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         # each [batch_size x max_seq_length x output_size]
         return outputs, states
 
-# TODO - Will eventually delete once everything is transferred
-def train(train_feed_dicts, vocab, max_epochs=1000, emb_dim=64, l2=0.0, clip=None, clip_op=tf.clip_by_value, sess=None):
 
-    # create model
-    logits, loss, preds = bicond_reader(len(vocab), emb_dim)
-
-    optim = tf.train.AdamOptimizer(learning_rate=0.001)
-    #optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
-
-    if l2 != 0.0:
-        loss = loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * l2
-
-    if clip is not None:
-        gradients = optim.compute_gradients(loss)
-        if clip_op == tf.clip_by_value:
-            capped_gradients = [(tf.clip_by_value(grad, clip[0], clip[1]), var)
-                                for grad, var in gradients]
-        elif clip_op == tf.clip_by_norm:
-            capped_gradients = [(tf.clip_by_norm(grad, clip), var)
-                                for grad, var in gradients]
-        min_op = optim.apply_gradients(capped_gradients)
-    else:
-        min_op = optim.minimize(loss)
-
-    tf.global_variables_initializer().run(session=sess)
-
-    print('Training...')
-    for i in range(1, max_epochs + 1):
-        loss_all = []
-        for j, batch in enumerate(train_feed_dicts):
-            _, current_loss, p = sess.run([min_op, loss, preds], feed_dict=batch)
-            print(current_loss)
-            loss_all.append(current_loss)
-        print('Epoch %d :' % i, np.mean(loss_all))
-    return logits, loss, preds
-
-
-def load_data():
+def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, data='kbp', type='train'):
     #train_data = dummy_data()
-    train_data = full_data()
-    train_data, vocab = prepare_data(train_data)
+    if file is None:
+        if data == 'kbp':
+            if type == 'train':
+                train_data_pos = full_data('data\\kbpLocal_train_pos.json')
+                train_data_neg = full_data('data\\kbpLocal_train_neg.json')
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data('data\\kbpLocal_dev_pos.json')
+                dev_data_neg = full_data('data\\kbpLocal_dev_neg.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg]
+            elif type == 'test':
+                test_data_pos = full_data('data\\kbpLocal_test_pos.json')
+                test_data_neg = full_data('data\\kbpLocal_test_neg.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg]
+            else:
+                raise Exception('type must be train, dev or test')
+        elif data == 'cloze':
+            if type == 'train':
+                train_data_pos = full_data('data\\clozeLocal_train_pos.json')
+                train_data_neg = full_data('data\\clozeLocal_train_neg.json')
+                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data('data\\clozeLocal_dev_pos.json')
+                dev_data_neg = full_data('data\\clozeLocal_dev_neg.json')
+                dev_data = full_data('data\\clozeLocal_dev.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
+            elif type == 'test':
+                test_data_pos = full_data('data\\clozeLocal_test_pos.json')
+                test_data_neg = full_data('data\\clozeLocal_test_neg.json')
+                test_data = full_data('data\\clozeLocal_test.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg, test_data]
+            else:
+                raise Exception('type must be train, dev or test')
+        else:
+            raise Exception('data must be kbp or cloze')
+
+        data = combine_data(list_of_dicts)
+    else:
+        data = full_data(file)
+
+    data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
     # TODO get newer version of get_feed_dicts working
-    #train_feed_dicts = get_feed_dicts(train_data, placeholders, batch_size=1, bucket_order=None,
+    #train_feed_dicts = get_feed_dicts(data, placeholders, batch_size=batch_size, bucket_order=None,
     #                                     bucket_structure=None)
-    train_feed_dicts = get_feed_dicts_old(train_data, placeholders, batch_size=1, bucket_order=None, bucket_structure=None)
-    return train_feed_dicts, vocab
+    feed_dicts = get_feed_dicts_old(data, placeholders, batch_size=batch_size, bucket_order=None, bucket_structure=None)
+    return feed_dicts, vocab
 
 
-def prepare_data(data, vocab=None):
+def prepare_data(data, vocab=None, extend_vocab=False):
     data_tokenized = deep_map(data, tokenize, ['question', 'support'])
     data_lower = deep_seq_map(data_tokenized, lower, ['question', 'support', 'answers', 'candidates'])
     data = deep_seq_map(data_lower, lambda xs: ["<SOS>"] + xs + ["<EOS>"], ["question", "support"])
-    if vocab is None:
-        vocab = Vocab()
+    if bool(vocab is None) ^ bool(extend_vocab is True):
+        if extend_vocab is False:
+            vocab = Vocab()
+
         for instance in data["question"] + data["candidates"] + data["answers"]:
             for token in instance:
                 vocab(token)
@@ -257,22 +273,3 @@ def prepare_data(data, vocab=None):
     data_ids = deep_seq_map(data_ids, lambda xs: len(xs), keys=['question', 'support'], fun_name='lengths', expand=True)
 
     return data_ids, vocab
-
-
-def main():
-    train_feed_dicts, vocab = load_data()
-    # Do not take up all the GPU memory, all the time.
-    sess_config = tf.ConfigProto()
-    sess_config.gpu_options.allow_growth = True
-    with tf.Session(config=sess_config) as sess:
-        logits, loss, preds = train(train_feed_dicts, vocab, sess=sess)
-        print('============')
-        # Test on train data - later, test on test data
-        for j, batch in enumerate(train_feed_dicts):
-            p = sess.run(preds, feed_dict=batch)
-            print(batch)
-            print(p)
-            print('-----')
-
-if __name__ == "__main__":
-    main()

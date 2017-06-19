@@ -1,6 +1,9 @@
+from models.base_model import BaseModel
 from models.basic_model import BasicModel
+from models.reinforce_model import ReinforceModel
 
 __all__ = [
+    "BaseModel",
     "BasicModel",
     "ReinforceModel"
 ]

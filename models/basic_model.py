@@ -1,122 +1,89 @@
-import os
-import copy
-import json
+import numpy as np
 import tensorflow as tf
 
+from models import capacities
+from models import BaseModel
 
-class BasicModel(object):
-    # To build your model, you only to pass a "configuration" which is a dictionary
-    def __init__(self, config):
-        # I like to keep the best HP found so far inside the model itself
-        # This is a mechanism to load the best HP and override the configuration
-        if config['best']:
-            config.update(self.get_best_config())
 
-        # I make a `deepcopy` of the configuration before using it
-        # to avoid any potential mutation when I iterate asynchronously over configurations
-        self.config = copy.deepcopy(config)
-
-        if config['debug']:  # This is a personal check i like to do
-            print('config', self.config)
-
-        # When working with NN, one usually initialize randomly
-        # and you want to be able to reproduce your initialization so make sure
-        # you store the random seed and actually use it in your TF graph (tf.set_random_seed() for example)
-        self.random_seed = self.config['random_seed']
-
-        # All models share some basics hyper parameters, this is the section where we
-        # copy them into the model
-        self.result_dir = self.config['result_dir']
-        self.max_iter = self.config['max_iter']
-        self.drop_keep_prob = self.config['drop_keep_prob']
-        self.learning_rate = self.config['learning_rate']
-        self.l2 = self.config['l2']
-
-        # Now the child Model needs some custom parameters, to avoid any
-        # inheritance hell with the __init__ function, the model
-        # will override this function completely
-        self.set_model_props()
-
-        # Again, child Model should provide its own build_graph function
-        self.graph = self.build_graph(tf.Graph())
-
-        # Any operations that should be in the graph but are common to all models
-        # can be added this way, here
-        with self.graph.as_default():
-            self.saver = tf.train.Saver(max_to_keep=50)
-            self.init_op = tf.global_variables_initializer()
-
-        # Add all the other common code for the initialization here
-        gpu_options = tf.GPUOptions(allow_growth=True)
-        sess_config = tf.ConfigProto(gpu_options=gpu_options)
-        self.sess = tf.Session(config=sess_config, graph=self.graph)
-        self.summary_writer = tf.summary.FileWriter(self.result_dir, self.sess.graph)
-
-        # This function is not always common to all models, that's why it's again
-        # separated from the __init__ one
-        self.init()
-
-    def set_model_props(self):
-        # This function is here to be overriden completely.
-        # When you look at your model, you want to know exactly which custom options it needs.
-        pass
+class BasicModel(BaseModel):
+    def set_model_props(self, config):
+        # TODO - Implement this. Should set any model properties specific to this model (i.e. not set in BasicModel)
+        print('still to implement set_model_props')
 
     def get_best_config(self):
-        # This function is here to be overriden completely.
-        # It returns a dictionary used to update the initial configuration (see __init__)
-        return {}
+        # TODO - Implement this. Look at example online
+        print('still to implement get_best_config')
 
-    @staticmethod
     def get_random_config(fixed_params={}):
-        # Why static? Because you want to be able to pass this function to other processes
-        # so they can independently generate random configuration of the current model
-        raise Exception('The get_random_config function must be overriden by the agent')
+        # TODO - Implement this. Look at example online
+        print('still to implement get_random_config')
 
     def build_graph(self, graph):
-        raise Exception('The build_graph function must be overriden by the agent')
+        """
+        Defines the TensorFlow computation graph to be used later for training and inference
+        :param graph: TensorFlow graph e.g. tf.Graph()
+        :return: built graph
+        """
+        with graph.as_default():
+            tf.set_random_seed(self.random_seed)
+
+            # Define placeholders
+            self.placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="question"),
+                                 "question_lengths": tf.placeholder(tf.int32, [None], name="question_lengths"),
+                                 "candidates": tf.placeholder(tf.int32, [None, None], name="candidates"),
+                                 "support": tf.placeholder(tf.int32, [None, None, None], name="support"),
+                                 "support_lengths": tf.placeholder(tf.int32, [None, None], name="support_lengths"),
+                                 "answers": tf.placeholder(tf.int32, [None], name="answers"),
+                                 "targets": tf.placeholder(tf.int32, [None, None], name="targets")}
+
+            self.epoch_loss = tf.placeholder(tf.float32)
+
+            # Load training data (or at least get vocab)
+            self.kbp_train_feed_dicts, self.vocab = capacities.load_data(self.placeholders, self.batch_size)  # TODO - edit this to get all data properly
+
+            # Define bicond reader model
+            self.logits, self.loss, self.preds = capacities.bicond_reader(self.placeholders, len(self.vocab),
+                                                                          self.emb_dim, drop_keep_prob=self.drop_keep_prob)
+
+            # Add train step
+            optim = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+            # optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
+
+            if self.l2 != 0.0:
+                self.loss = self.loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
+
+            if self.clip is not None:
+                gradients = optim.compute_gradients(self.loss)
+                if self.clip_op == tf.clip_by_value:
+                    capped_gradients = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
+                                        for grad, var in gradients]
+                elif self.clip_op == tf.clip_by_norm:
+                    capped_gradients = [(tf.clip_by_norm(grad, self.clip), var)
+                                        for grad, var in gradients]
+                self.train_op = optim.apply_gradients(capped_gradients)
+            else:
+                self.train_op = optim.minimize(self.loss)
+
+            # Add TensorBoard operations
+            self.loss_summary = tf.summary.scalar('Loss', tf.reduce_mean(self.loss, 0))
+
+            self.summary = tf.summary.merge_all()
+
+        return graph
 
     def infer(self):
-        raise Exception('The infer function must be overriden by the agent')
+        print('still to implement infer')
 
     def learn_from_epoch(self):
-        # I like to separate the function to train per epoch and the function to train globally
-        raise Exception('The learn_from_epoch function must be overriden by the agent')
+        self.epoch_losses = []
 
-    def train(self, save_every=1):
-        # This function is usually common to all your models, Here is an example:
-        for epoch_id in range(0, self.max_iter):
-            self.learn_from_epoch()
+        # Run train_op
+        for batch in self.kbp_train_feed_dicts:
+            _, current_loss, summary = self.sess.run([self.train_op, self.loss, self.summary], feed_dict=batch)
+            self.epoch_losses.append(np.mean(current_loss))
 
-            # If you don't want to save during training, you can just pass a negative number
-            if save_every > 0 and epoch_id % save_every == 0:
-                self.save()
+            # Run batch TensorBoard operations here if necessary
+            self.summary_writer.add_summary(summary, self.summary_index)
+            self.summary_index += 1
 
-    def save(self):
-        # This function is usually common to all your models, Here is an example:
-        global_step_t = tf.train.get_global_step(self.graph)
-        global_step, episode_id = self.sess.run([global_step_t, self.episode_id])
-        if self.config['debug']:
-            print('Saving to %s with global_step %d' % (self.result_dir, global_step))
-        self.saver.save(self.sess, self.result_dir + '/agent-ep_' + str(episode_id), global_step)
-
-        # I always keep the configuration that
-        if not os.path.isfile(self.result_dir + '/config.json'):
-            config = self.config
-            if 'phi' in config:
-                del config['phi']
-            with open(self.result_dir + '/config.json', 'w') as f:
-                json.dump(self.config, f)
-
-    def init(self):
-        # This function is usually common to all your models
-        # but making separate than the __init__ function allows it to be overidden cleanly
-        # this is an example of such a function
-        checkpoint = tf.train.get_checkpoint_state(self.result_dir)
-        if checkpoint is None:
-            self.sess.run(self.init_op)
-        else:
-
-            if self.config['debug']:
-                print('Loading the model from folder: %s' % self.result_dir)
-            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
 

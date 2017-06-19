@@ -8,6 +8,7 @@ import numpy as np
 # See the __init__ script in the models folder
 # `make_model` is a helper function to load any models you have
 from models import make_model
+from tensorflow.contrib.training import HParams
 # from hpsearch import hyperband, randomsearch  TODO - For hyperparameter search
 
 # I personally always like to make my paths absolute
@@ -30,16 +31,21 @@ flags.DEFINE_string('fixed_params', "{}", 'JSON inputs to fix some params in a H
 # Model configuration
 flags.DEFINE_string('model_name', 'ReinforceModel', 'Unique name of the model')
 flags.DEFINE_boolean('best', False, 'Force to use the best known configuration')
-flags.DEFINE_float('initial_mean', 0., 'Initial mean for NN')  # TODO - check what this does
-flags.DEFINE_float('initial_stddev', 1e-2, 'Initial standard deviation for NN')
 flags.DEFINE_float('learning_rate', 1e-3, 'The learning rate of SGD')
-flags.DEFINE_float('drop_keep_prob', 1e-3, 'The dropout keep probability')
+flags.DEFINE_float('drop_keep_prob', 1.0, 'The dropout keep probability')
 flags.DEFINE_float('l2', 0.0, 'L2 regularisation strength')
+flags.DEFINE_integer('emb_dim', 64, 'Word embedding dimension')
+flags.DEFINE_integer('batch_size', 64, 'Batch size')
+flags.DEFINE_string('clip_op', 'value', 'Set type of gradient clipping to use - can be either value or norm')
 
+# GeneRe specific parameters
+flags.DEFINE_float('learning_rate_gamma', 1e-3, 'The learning rate of SGD for the sampler parameter update')
+flags.DEFINE_float('lambda', 0.1, 'Generative regularisation strength')
+flags.DEFINE_float('alpha', 1e-1, 'The baseline update parameter')
 
 # Training configuration
 flags.DEFINE_boolean('debug', False, 'Debug mode')
-flags.DEFINE_integer('max_iter', 2000, 'Number of training steps')
+flags.DEFINE_integer('max_iter', 1000, 'Number of epochs')
 flags.DEFINE_boolean('infer', False, 'Load a model for inference')
 
 # This is very important for TensorBoard
@@ -49,13 +55,14 @@ flags.DEFINE_string('result_dir', dir + '/results/' + flags.FLAGS.model_name + '
 
 # Another important point, you must provide an access to the random seed
 # to be able to fully reproduce an experiment
-flags.DEFINE_integer('random_seed', np.random.randint(0, sys.maxsize), 'Value of random seed')
+flags.DEFINE_integer('random_seed', np.random.randint(0, 2**8), 'Value of random seed')
 
 
 def main(_):
     config = flags.FLAGS.__flags.copy()
     # fixed_params must be a string to be passed in the shell, let's use JSON
     config["fixed_params"] = json.loads(config["fixed_params"])
+    config['clip'] = None  # Defined here as it may need to be a list
 
     if config['fullsearch']:
         # Some code for HP search ... TODO - For hyperparameter search
