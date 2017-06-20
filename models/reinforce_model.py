@@ -99,7 +99,7 @@ class ReinforceModel(BaseModel):
 
                 # Sample cloze batch
                 try:
-                    batch = self.sample_cloze_batch(delta)  # TODO - function needs to be implemented
+                    batch = self.sample_cloze_batch(delta)
                 except StopIteration:
                     break
 
