@@ -23,6 +23,7 @@ def full_data(file='data\\kbpLocal_train_pos.json'):
 
 
 def combine_data(list_of_dicts):
+    # TODO - This is probably using a lot more memory than it needs to by making multiple copies
     if len(list_of_dicts) == 1:
         return list_of_dicts[0]
     else:

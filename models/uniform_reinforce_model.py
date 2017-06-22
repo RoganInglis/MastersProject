@@ -5,7 +5,7 @@ from models import capacities
 from models import BaseModel
 
 
-class ReinforceModel(BaseModel):
+class UniformReinforceModel(BaseModel):
     def set_model_props(self, config):
         self.learning_rate_gamma = config['learning_rate_gamma']
         self.lambda_value = config['lambda']
@@ -13,6 +13,8 @@ class ReinforceModel(BaseModel):
         self.alpha = config['alpha']
 
         # Initialise parameters
+        self.len_gamma = 1  # TODO - depends on sampler used
+        self.gamma = 1  # TODO - depends on len_gamma, but random initialisation
         self.mu = 1  # TODO - depends if batch size > 1 can be used, but random initialisation
 
     def get_best_config(self):
@@ -44,12 +46,14 @@ class ReinforceModel(BaseModel):
             self.epoch_loss = tf.placeholder(tf.float32)
 
             # Load data (or at least get vocab)
-            # TODO - This will have to be edited most likely
             self.kbp_train_feed_dicts, vocab = capacities.load_data(self.placeholders, self.batch_size, data='kbp')
             self.cloze_train_feed_dicts, self.vocab = capacities.load_data(self.placeholders, self.batch_size, vocab=vocab, extend_vocab=True, data='cloze')  # TODO - This is causing memory errors. Could test using less of the cloze data for now but might need to use queues later
 
-
-            # TODO - Also define cloze sampler reader
+            """
+            DELETE
+            self.kbp_train_feed_dicts = list(self.kbp_train_feed_dicts)
+            self.cloze_train_feed_dicts = list(self.cloze_train_feed_dicts)
+            """
 
             # Define bicond reader model
             self.logits, self.loss, self.preds = capacities.bicond_reader(self.placeholders, len(self.vocab),
@@ -89,10 +93,29 @@ class ReinforceModel(BaseModel):
 
         while True:
             # Get batch
-            batch = self.get_batch()
+            if self.lambda_frac > np.random.uniform():
+                # Get KBP batch
+                try:
+                    batch = next(self.kbp_train_feed_dicts.iterator())
+                except StopIteration:
+                    break
+            else:
+                # Get noise vector from standard gaussian
+                delta = np.random.normal(size=[self.len_gamma, 1])
 
-            # Run train step to update theta and gamma
-            # TODO - needs to be modified to include gamma update
+                # Sample cloze batch
+                try:
+                    batch = self.sample_cloze_batch(delta)
+                except StopIteration:
+                    break
+
+                # Perform gamma parameter update
+                """"
+                logprob =   # TODO
+                self.gamma -= self.learning_rate_gamma*(logprob - self.mu)*delta  # TODO - make sure this works for batch sizes greater than 1 if possible
+                """
+
+            # Run train step
             _, current_loss, summary = self.sess.run([self.train_op, self.loss, self.summary], feed_dict=batch)
             self.epoch_losses.append(np.mean(current_loss))
 
@@ -106,12 +129,10 @@ class ReinforceModel(BaseModel):
             self.summary_writer.add_summary(summary, self.summary_index)
             self.summary_index += 1
 
-    def get_batch(self):
-        #      - Use another reader to decide whether to accept or reject sample while going through shuffled list
-        for _ in range(self.batch_size):
-            if self.lambda_frac > np.random.uniform():
-                batch = []  # TODO - should add a kbp example to current batch and deal with the case that the final kbp example is taken (i.e. let learn_from_epoch know to exit loop)
-            else:
-                batch = []  # TODO - should add a selected cloze example to current batch
+    def sample_cloze_batch(self, delta):
+        # TODO - Currently using uniform sampler
+        #      - Begin with uniform sampler? Just shuffle cloze data and take a full batch just from the first elements
+        #      - Use another reader to decide whether to accept or reject sample while going through shuffled list?
+        #      - Uniformly sample a KBP example and then use some distance measure from that to accept or reject?
+        return next(self.cloze_train_feed_dicts.iterator())
 
-        return batch
