@@ -45,17 +45,34 @@ class ReinforceModel(BaseModel):
 
             # Load data (or at least get vocab)
             # TODO - This will have to be edited most likely
-            self.kbp_train_feed_dicts, vocab = capacities.load_data(self.placeholders, self.batch_size, data='kbp')
-            self.cloze_train_feed_dicts, self.vocab = capacities.load_data(self.placeholders, self.batch_size, vocab=vocab, extend_vocab=True, data='cloze')  # TODO - This is causing memory errors. Could test using less of the cloze data for now but might need to use queues later
+            self.kbp_train_data, vocab = capacities.load_data(self.placeholders, 1, data='kbp')
+            self.cloze_train_data, self.vocab = capacities.load_data(self.placeholders, 1, vocab=vocab, extend_vocab=True, data='cloze')  # TODO - This is causing memory errors. Could test using less of the cloze data for now but might need to use queues later
 
+            # Embed inputs
+            with tf.variable_scope("embeddings"):
+                embeddings = tf.get_variable("word_embeddings", [len(self.vocab), self.emb_dim], dtype=tf.float32)
+
+            with tf.variable_scope("embedders") as varscope:
+                question_embedded = tf.nn.embedding_lookup(embeddings, self.placeholders['question'])
+                varscope.reuse_variables()
+                support_embedded = tf.nn.embedding_lookup(embeddings, self.placeholders['support'])
+                varscope.reuse_variables()
+                candidates_embedded = tf.nn.embedding_lookup(embeddings, self.placeholders['candidates'])
+
+            self.inputs_embedded = {'question_embedded': question_embedded,
+                                    'support_embedded': support_embedded,
+                                    'candidates_embedded': candidates_embedded}
 
             # TODO - Also define cloze sampler reader
 
             # Define bicond reader model
-            self.logits, self.loss, self.preds = capacities.bicond_reader(self.placeholders, len(self.vocab),
-                                                                          self.emb_dim, drop_keep_prob=self.drop_keep_prob)
+            self.logits, self.loss, self.preds = capacities.bicond_reader_embedded(self.placeholders,
+                                                                                   self.inputs_embedded,
+                                                                                   self.emb_dim,
+                                                                                   drop_keep_prob=self.drop_keep_prob)
 
             # Add train step
+            # TODO - will need to have second loss & optimiser for the reinforcement learning part
             optim = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             # optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
 
@@ -86,10 +103,11 @@ class ReinforceModel(BaseModel):
 
     def learn_from_epoch(self):
         self.epoch_losses = []
+        done = False
 
-        while True:
+        while not done:
             # Get batch
-            batch = self.get_batch()
+            batch, done = self.get_batch()
 
             # Run train step to update theta and gamma
             # TODO - needs to be modified to include gamma update
@@ -107,11 +125,51 @@ class ReinforceModel(BaseModel):
             self.summary_index += 1
 
     def get_batch(self):
-        #      - Use another reader to decide whether to accept or reject sample while going through shuffled list
+        """
+        Gets a batch of data sampled from both kbp and cloze data according to regularisation parameter lambda.
+        If the final data point of either the kbp or cloze data sets is reached while attempting to get a batch
+        this will return a smaller batch than batch_size containing the final examples if required
+        :return: batch - batch of training data sampled from kbp and cloze data
+                 done - boolean flag indicating that the end of the epoch has been reached (i.e. the end of the kbp
+                        data has been reached)
+        """
+        # - Use another reader to decide whether to accept or reject sample while going through shuffled list
+        batch = {'answers': [],
+                 'candidates': [],
+                 'question': [],
+                 'question_lengths': [],
+                 'support': [],
+                 'support_lengths': [],
+                 'targets': []}
+
+        done = False
+
         for _ in range(self.batch_size):
             if self.lambda_frac > np.random.uniform():
-                batch = []  # TODO - should add a kbp example to current batch and deal with the case that the final kbp example is taken (i.e. let learn_from_epoch know to exit loop)
-            else:
-                batch = []  # TODO - should add a selected cloze example to current batch
+                # Take single example dict from
+                try:
+                    sample = next(self.kbp_train_data.iterator())  # TODO - deal with the case that the final kbp example is taken (i.e. let learn_from_epoch know to exit loop
+                except StopIteration:
+                    done = True
+                    break
 
-        return batch
+            else:
+                while True:
+                    # Get candidate from cloze data
+                    try:
+                        sample = next(self.cloze_train_data.iterator())  # TODO - deal with case that last example is taken and case that no sample has been selected from whole data (still need to return a sample). Also test that this implementation actually works
+                    except StopIteration:
+                        done = True
+                        break  # TODO - sort out what happens when the end is reached here; would it be better to continuously loop the cloze data regardless of epoch and only end the epoch when the kbp data is used up?
+
+                    # Evaluate using reader
+                    select = self.sess.run(self.selection, feed_dict={'question': sample['question'],
+                                                                      'question_lengths': sample['question_lengths']})  # TODO selection network needs to be coded
+
+                    # Take example and exit loop or ignore
+                    if select == 1:
+                        break
+
+            batch = capacities.extend_dict(batch, sample)
+
+        return batch, done
