@@ -23,7 +23,7 @@ def full_data(file='data\\kbpLocal_train_pos.json'):
 
 
 def combine_data(list_of_dicts):
-    # TODO - This is probably using a lot more memory than it needs to by making multiple copies
+    # TODO - This is probably using a lot more memory than it needs to by making a full copy
     if len(list_of_dicts) == 1:
         return list_of_dicts[0]
     else:
@@ -217,7 +217,26 @@ def bicond_reader_embedded(placeholders, inputs_embedded, emb_dim, drop_keep_pro
 def question_reader(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
     question_embedded = inputs_embedded['question_embedded']
 
+    with tf.variable_scope('question_reader') as scope:
+        outputs, states = reader(question_embedded, placeholders['question_lengths'], emb_dim,
+                                 scope=scope, drop_keep_prob=drop_keep_prob)
 
+    # Take final outputs and concatenate
+    output_fw = states[0][1]  # [batch_size, emb_dim]  # TODO - should this be outputs or states, will need to use slice maybe instead of squeeze so that the rank of output is known?
+    output_bw = states[1][1]  # [batch_size, emb_dim]  # TODO - should this be outputs or states
+
+    output = tf.concat([output_fw, output_bw], 1)  # [batch_size, 2*emb_dim]
+
+    # Linear layer to transform from 2*emb_dim to 2 (select or not select)
+    scores = tf.layers.dense(output, 2)  # [batch_size, 2] TODO - need an activation here or just affine transform?
+
+    # Get selection
+    selection = tf.argmax(scores, axis=1)  # [batch_size, 1]
+
+    predict = tf.nn.softmax(scores)
+
+    # TODO - what should this return? - definitely selection. loss?, logits?
+    return scores, selection, predict  # TODO - remove outputs and states
 
 
 def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop_keep_prob=1.0):
@@ -271,6 +290,7 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
 
 def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
     #train_data = dummy_data()
+    #  TODO - could speed up and possibly reduce required memory by saving final result and reloading rather than going through whole process again
     if file is None:
         if data == 'kbp':
             if type == 'train':

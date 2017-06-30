@@ -13,7 +13,7 @@ class ReinforceModel(BaseModel):
         self.alpha = config['alpha']
 
         # Initialise parameters
-        self.mu = 1  # TODO - depends if batch size > 1 can be used, but random initialisation
+        self.mu = 0  # TODO - depends if batch size > 1 can be used, but random initialisation
 
     def get_best_config(self):
         # TODO - Implement this. Look at example online
@@ -44,9 +44,10 @@ class ReinforceModel(BaseModel):
             self.epoch_loss = tf.placeholder(tf.float32)
 
             # Load data (or at least get vocab)
-            # TODO - This will have to be edited most likely
+            # TODO - This will have to be edited most likely so that full data can be loaded and then processed correctly
             self.kbp_train_data, vocab = capacities.load_data(self.placeholders, 1, data='kbp')
-            self.cloze_train_data, self.vocab = capacities.load_data(self.placeholders, 1, vocab=vocab, extend_vocab=True, data='cloze')  # TODO - This is causing memory errors. Could test using less of the cloze data for now but might need to use queues later
+            self.cloze_train_data, self.vocab = capacities.load_data(self.placeholders, 1,
+                                                                     vocab=vocab, extend_vocab=True, data='cloze')  # TODO - This is causing memory errors. Could test using less of the cloze data for now but might need to use queues later
 
             # Embed inputs
             with tf.variable_scope("embeddings"):
@@ -63,36 +64,56 @@ class ReinforceModel(BaseModel):
                                     'support_embedded': support_embedded,
                                     'candidates_embedded': candidates_embedded}
 
-            # TODO - Also define cloze sampler reader
-
             # Define bicond reader model
-            self.logits, self.loss, self.preds = capacities.bicond_reader_embedded(self.placeholders,
-                                                                                   self.inputs_embedded,
-                                                                                   self.emb_dim,
-                                                                                   drop_keep_prob=self.drop_keep_prob)
+            self.logits_theta, self.loss_theta, self.preds_theta = capacities.bicond_reader_embedded(self.placeholders,
+                                                                                         self.inputs_embedded,
+                                                                                         self.emb_dim,
+                                                                                         drop_keep_prob=self.drop_keep_prob)
 
+            # Define cloze sampler reader
+            self.logits_gamma, self.selection, self.preds_gamma = capacities.question_reader(self.placeholders,
+                                                                                             self.inputs_embedded,
+                                                                                             self.emb_dim,
+                                                                                             drop_keep_prob=self.drop_keep_prob)
+            
+            # Define cloze sampler reader loss
+            self.logprob_theta = tf.log(self.preds_theta)
+
+            self.loss_gamma = tf.log(self.preds_gamma)*tf.stop_gradient(self.logprob_theta - self.mu)  # TODO - Double check this is correct
+            
             # Add train step
-            # TODO - will need to have second loss & optimiser for the reinforcement learning part
-            optim = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
-            # optim = tf.train.AdadeltaOptimizer(learning_rate=1.0)
+            optim_theta = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
+            # optim_theta = tf.train.AdadeltaOptimizer(learning_rate=
+
+            optim_gamma = tf.train.AdamOptimizer(learning_rate=self.learning_rate_gamma)
 
             if self.l2 != 0.0:
-                self.loss = self.loss + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
+                self.loss_theta = self.loss_theta + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
+                self.loss_gamma = self.loss_gamma + tf.add_n(
+                    [tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
 
             if self.clip is not None:
-                gradients = optim.compute_gradients(self.loss)
+                gradients_theta = optim_theta.compute_gradients(self.loss_theta)
+                gradients_gamma = optim_theta.compute_gradients(self.loss_gamma)
                 if self.clip_op == tf.clip_by_value:
-                    capped_gradients = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
-                                        for grad, var in gradients]
+                    capped_gradients_theta = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
+                                        for grad, var in gradients_theta]
+                    capped_gradients_gamma = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
+                                              for grad, var in gradients_gamma]
                 elif self.clip_op == tf.clip_by_norm:
-                    capped_gradients = [(tf.clip_by_norm(grad, self.clip), var)
-                                        for grad, var in gradients]
-                self.train_op = optim.apply_gradients(capped_gradients)
+                    capped_gradients_theta = [(tf.clip_by_norm(grad, self.clip), var)
+                                        for grad, var in gradients_theta]
+                    capped_gradients_gamma = [(tf.clip_by_norm(grad, self.clip), var)
+                                              for grad, var in gradients_gamma]
+                self.train_op_theta = optim_theta.apply_gradients(capped_gradients_theta)
+                self.train_op_gamma = optim_theta.apply_gradients(capped_gradients_gamma)
             else:
-                self.train_op = optim.minimize(self.loss)
+                self.train_op_theta = optim_theta.minimize(self.loss_theta)
+                self.train_op_gamma = optim_theta.minimize(self.loss_gamma)
 
             # Add TensorBoard operations
-            self.loss_summary = tf.summary.scalar('Loss', tf.reduce_mean(self.loss, 0))
+            self.loss_theta_summary = tf.summary.scalar('Theta Loss', tf.reduce_mean(self.loss_theta, 0))
+            self.loss_gamma_summary = tf.summary.scalar('Gamma Loss', tf.reduce_mean(self.loss_gamma, 0))
 
             self.summary = tf.summary.merge_all()
 
@@ -110,15 +131,13 @@ class ReinforceModel(BaseModel):
             batch, done = self.get_batch()
 
             # Run train step to update theta and gamma
-            # TODO - needs to be modified to include gamma update
-            _, current_loss, summary = self.sess.run([self.train_op, self.loss, self.summary], feed_dict=batch)
+            _, _, current_loss, summary = self.sess.run([self.train_op_theta, self.train_op_gamma,
+                                                         self.loss_theta, self.summary], feed_dict=batch)
             self.epoch_losses.append(np.mean(current_loss))
 
             # Perform baseline update
-            """
-            logprob =   # TODO
-            self.mu = self.alpha*self.mu + (1 - self.alpha)*logprob  # TODO - make sure this works for batch sizes greater than 1 if possible
-            """
+            logprob = self.sess.run(self.logprob_theta, feed_dict=batch)
+            self.mu = self.alpha*self.mu + (1 - self.alpha)*np.mean(logprob)  # TODO - Taking mean of logprob for batch sizes greater than 1, for same batch as used for previous update; double check this is correct
 
             # Run batch TensorBoard operations here if necessary
             self.summary_writer.add_summary(summary, self.summary_index)
@@ -134,18 +153,19 @@ class ReinforceModel(BaseModel):
                         data has been reached)
         """
         # - Use another reader to decide whether to accept or reject sample while going through shuffled list
-        batch = {'answers': [],
-                 'candidates': [],
-                 'question': [],
-                 'question_lengths': [],
-                 'support': [],
-                 'support_lengths': [],
-                 'targets': []}
+        batch = {self.placeholders['answers']: [],
+                 self.placeholders['candidates']: [],
+                 self.placeholders['question']: [],
+                 self.placeholders['question_lengths']: [],
+                 self.placeholders['support']: [],
+                 self.placeholders['support_lengths']: [],
+                 self.placeholders['targets']: []}
 
         done = False
 
         for _ in range(self.batch_size):
             if self.lambda_frac > np.random.uniform():
+                print('kbp')  # TODO - delete
                 # Take single example dict from
                 try:
                     sample = next(self.kbp_train_data.iterator())  # TODO - deal with the case that the final kbp example is taken (i.e. let learn_from_epoch know to exit loop
@@ -154,6 +174,7 @@ class ReinforceModel(BaseModel):
                     break
 
             else:
+                print('cloze')  # TODO - delete
                 while True:
                     # Get candidate from cloze data
                     try:
@@ -163,8 +184,8 @@ class ReinforceModel(BaseModel):
                         break  # TODO - sort out what happens when the end is reached here; would it be better to continuously loop the cloze data regardless of epoch and only end the epoch when the kbp data is used up?
 
                     # Evaluate using reader
-                    select = self.sess.run(self.selection, feed_dict={'question': sample['question'],
-                                                                      'question_lengths': sample['question_lengths']})  # TODO selection network needs to be coded
+                    select = self.sess.run([self.selection], feed_dict={self.placeholders['question']: sample[self.placeholders['question']],
+                                                                        self.placeholders['question_lengths']: sample[self.placeholders['question_lengths']]})  # TODO - CURRENTLY GETTING ISSUE WHERE SELECTION NETWORK MAY BE INITIALISED SUCH THAT IT NEVER SELECTS ANYTHING (maybe need something like decaying epsilon greedy?)
 
                     # Take example and exit loop or ignore
                     if select == 1:
