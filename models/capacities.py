@@ -37,7 +37,6 @@ def combine_data(list_of_dicts):
 
 
 def process_data_dict(data_dict):
-
     # TODO - this could probably be sped up
     instances_list = data_dict['instances']
     data_list = []
@@ -63,6 +62,176 @@ def process_data_dict(data_dict):
         data['answers'].append(dict_instance['answers'][0])
 
     return data
+
+
+def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
+    #train_data = dummy_data()
+    #  TODO - could speed up and possibly reduce required memory by saving final result and reloading rather than going through whole process again
+    if file is None:
+        if data == 'kbp':
+            if type == 'train':
+                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
+                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'small_train':
+                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos_small.json')
+                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg_small.json')
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
+                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg]
+            elif type == 'test':
+                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
+                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg]
+            else:
+                raise Exception('type must be train, dev or test')
+        elif data == 'cloze':
+            if type == 'train':
+                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
+                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
+                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'small_train':
+                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos_small.json')
+                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg_small.json')
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
+                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
+                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
+            elif type == 'test':
+                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
+                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
+                test_data = full_data(data_dir + 'clozeLocal_test.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg, test_data]
+            else:
+                raise Exception('type must be train, dev or test')
+        else:
+            raise Exception('data must be kbp or cloze')
+
+        data = combine_data(list_of_dicts)
+    else:
+        data = full_data(file)
+
+    data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
+    #train_feed_dicts = get_feed_dicts(data, placeholders, batch_size=batch_size, bucket_order=None,
+    #                                     bucket_structure=None)
+    # TODO - get_feed_dicts_old returns a GeneratorWithRestart object containing the data divided in to dicts containing
+    # each batch of data. These are padded individually as the padding size only needs to be the same within a batch,
+    # however as we want to iterate through and take any example for any batch the padding must be consistent over all
+    # the data. get_feed_dicts_old needs to be modified to at least produce batches with consistent padding
+    data_np = numpify(data)
+    feed_dicts = get_feed_dicts(data_np, placeholders, batch_size, len(data_np['answers']))
+    # feed_dicts = get_feed_dicts_old(data, placeholders, batch_size=batch_size, bucket_order=None, bucket_structure=None)
+    return feed_dicts, vocab
+
+
+def load_data_dicts(vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
+    if file is None:
+        if data == 'kbp':
+            if type == 'train':
+                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
+                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
+                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg]
+            elif type == 'test':
+                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
+                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg]
+            else:
+                raise Exception('type must be train, dev or test')
+        elif data == 'cloze':
+            if type == 'train':
+                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
+                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
+                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
+
+                list_of_dicts = [train_data_pos, train_data_neg]
+            elif type == 'dev':
+                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
+                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
+                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
+
+                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
+            elif type == 'test':
+                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
+                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
+                test_data = full_data(data_dir + 'clozeLocal_test.json')
+
+                list_of_dicts = [test_data_pos, test_data_neg, test_data]
+            else:
+                raise Exception('type must be train, dev or test')
+        else:
+            raise Exception('data must be kbp or cloze')
+
+        data = combine_data(list_of_dicts)
+    else:
+        data = full_data(file)
+
+    data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
+
+    return data, vocab
+
+
+def prepare_data(data, vocab=None, extend_vocab=False):
+    data_tokenized = deep_map(data, tokenize, ['question', 'support'])
+    data_lower = deep_seq_map(data_tokenized, lower, ['question', 'support', 'answers', 'candidates'])
+    data = deep_seq_map(data_lower, lambda xs: ["<SOS>"] + xs + ["<EOS>"], ["question", "support"])
+    if bool(vocab is None) ^ bool(extend_vocab is True):
+        if extend_vocab is False:
+            vocab = Vocab()
+
+        for instance in data["question"] + data["candidates"] + data["answers"]:
+            for token in instance:
+                vocab(token)
+
+        for instance in data["support"]:
+            for sent in instance:
+                for token in sent:
+                    vocab(token)
+    data = jtr_map_to_targets(data, 'candidates', 'answers')
+    data_ids = deep_map(data, vocab, ["question", "candidates", "support", "answers"])
+    data_ids = deep_seq_map(data_ids, lambda xs: len(xs), keys=['question', 'support'], fun_name='lengths', expand=True)
+
+    return data_ids, vocab
+
+
+def listify(data):
+    if type(data) is np.ndarray:
+        data = data.tolist()
+    elif type(data) is list:
+        for i, element in enumerate(data):
+            data[i] = listify(element)
+    return data
+
+
+def listify_dict(list_dict):
+    for key in list_dict:
+        listify(list_dict[key])
+    return list_dict
+
+
+def extend_dict(data_dict, new_data_dict):
+    for key in data_dict:
+        data_dict[key].extend(new_data_dict[key])
+    return data_dict
 
 
 def bicond_reader(placeholders, vocab_size, emb_dim, drop_keep_prob=1.0):
@@ -221,9 +390,9 @@ def question_reader(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
         outputs, states = reader(question_embedded, placeholders['question_lengths'], emb_dim,
                                  scope=scope, drop_keep_prob=drop_keep_prob)
 
-    # Take final outputs and concatenate
-    output_fw = states[0][1]  # [batch_size, emb_dim]  # TODO - should this be outputs or states, will need to use slice maybe instead of squeeze so that the rank of output is known?
-    output_bw = states[1][1]  # [batch_size, emb_dim]  # TODO - should this be outputs or states
+    # Take final states and concatenate
+    output_fw = states[0][1]  # [batch_size, emb_dim]
+    output_bw = states[1][1]  # [batch_size, emb_dim]
 
     output = tf.concat([output_fw, output_bw], 1)  # [batch_size, 2*emb_dim]
 
@@ -236,7 +405,7 @@ def question_reader(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
     predict = tf.nn.softmax(scores)
 
     # TODO - what should this return? - definitely selection. loss?, logits?
-    return scores, selection, predict  # TODO - remove outputs and states
+    return scores, selection, predict
 
 
 def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop_keep_prob=1.0):
@@ -286,143 +455,3 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         # in case LSTMCell: output_state_fw = (c_fw,h_fw), and output_state_bw = (c_bw,h_bw)
         # each [batch_size x max_seq_length x output_size]
         return outputs, states
-
-
-def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
-    #train_data = dummy_data()
-    #  TODO - could speed up and possibly reduce required memory by saving final result and reloading rather than going through whole process again
-    if file is None:
-        if data == 'kbp':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg]
-            else:
-                raise Exception('type must be train, dev or test')
-        elif data == 'cloze':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
-                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
-                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
-                test_data = full_data(data_dir + 'clozeLocal_test.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg, test_data]
-            else:
-                raise Exception('type must be train, dev or test')
-        else:
-            raise Exception('data must be kbp or cloze')
-
-        data = combine_data(list_of_dicts)
-    else:
-        data = full_data(file)
-
-    data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
-    # TODO get newer version of get_feed_dicts working
-    #train_feed_dicts = get_feed_dicts(data, placeholders, batch_size=batch_size, bucket_order=None,
-    #                                     bucket_structure=None)
-    feed_dicts = get_feed_dicts_old(data, placeholders, batch_size=batch_size, bucket_order=None, bucket_structure=None)
-    return feed_dicts, vocab
-
-
-def load_data_dicts(vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
-    if file is None:
-        if data == 'kbp':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg]
-            else:
-                raise Exception('type must be train, dev or test')
-        elif data == 'cloze':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
-                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
-                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
-                test_data = full_data(data_dir + 'clozeLocal_test.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg, test_data]
-            else:
-                raise Exception('type must be train, dev or test')
-        else:
-            raise Exception('data must be kbp or cloze')
-
-        data = combine_data(list_of_dicts)
-    else:
-        data = full_data(file)
-
-    data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
-
-    return data, vocab
-
-
-def prepare_data(data, vocab=None, extend_vocab=False):
-    data_tokenized = deep_map(data, tokenize, ['question', 'support'])
-    data_lower = deep_seq_map(data_tokenized, lower, ['question', 'support', 'answers', 'candidates'])
-    data = deep_seq_map(data_lower, lambda xs: ["<SOS>"] + xs + ["<EOS>"], ["question", "support"])
-    if bool(vocab is None) ^ bool(extend_vocab is True):
-        if extend_vocab is False:
-            vocab = Vocab()
-
-        for instance in data["question"] + data["candidates"] + data["answers"]:
-            for token in instance:
-                vocab(token)
-
-        for instance in data["support"]:
-            for sent in instance:
-                for token in sent:
-                    vocab(token)
-    data = jtr_map_to_targets(data, 'candidates', 'answers')
-    data_ids = deep_map(data, vocab, ["question", "candidates", "support", "answers"])
-    data_ids = deep_seq_map(data_ids, lambda xs: len(xs), keys=['question', 'support'], fun_name='lengths', expand=True)
-
-    return data_ids, vocab
-
-
-def extend_dict(data_dict, new_data_dict):
-    for key in data_dict:
-        data_dict[key].extend(new_data_dict[key])
-    return data_dict

@@ -6,7 +6,7 @@ from models import capacities
 from models import BaseModel
 
 
-class ReinforceModel(BaseModel):
+class ReinforceModelBlackBox(BaseModel):
     def set_model_props(self, config):
         self.learning_rate_gamma = config['learning_rate_gamma']
         self.lambda_value = config['lambda']
@@ -84,44 +84,80 @@ class ReinforceModel(BaseModel):
                                                                                                  drop_keep_prob=self.drop_keep_prob)
             
             # Define cloze sampler reader loss
-            targets_index = tf.transpose(tf.stack([tf.range(self.batch_size), tf.to_int32(tf.argmax(self.placeholders['targets'], 1))]))
+            targets_index = tf.transpose(
+                tf.stack([tf.range(self.batch_size), tf.to_int32(tf.argmax(self.placeholders['targets'], 1))]))
             self.logprob_theta = tf.log(tf.gather_nd(self.preds_theta, targets_index))
-
-            self.loss_gamma = tf.log(self.preds_gamma[:, 1])*tf.stop_gradient(self.logprob_theta - self.mu)  # TODO - Double check this is correct; is using loss_theta correct and is the preds_gamma part correct
             
-            # Add train step
+            # Add theta train step
             optim_theta = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             # optim_theta = tf.train.AdadeltaOptimizer(learning_rate=
 
-            optim_gamma = tf.train.AdamOptimizer(learning_rate=self.learning_rate_gamma)
-
             if self.l2 != 0.0:
                 self.loss_theta = self.loss_theta + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
-                self.loss_gamma = self.loss_gamma + tf.add_n(
-                    [tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
 
             if self.clip is not None:
                 gradients_theta = optim_theta.compute_gradients(self.loss_theta)
-                gradients_gamma = optim_gamma.compute_gradients(self.loss_gamma)
                 if self.clip_op == tf.clip_by_value:
                     capped_gradients_theta = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
                                         for grad, var in gradients_theta]
-                    capped_gradients_gamma = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
-                                              for grad, var in gradients_gamma]
                 elif self.clip_op == tf.clip_by_norm:
                     capped_gradients_theta = [(tf.clip_by_norm(grad, self.clip), var)
                                         for grad, var in gradients_theta]
-                    capped_gradients_gamma = [(tf.clip_by_norm(grad, self.clip), var)
-                                              for grad, var in gradients_gamma]
                 self.train_op_theta = optim_theta.apply_gradients(capped_gradients_theta)
-                self.train_op_gamma = optim_theta.apply_gradients(capped_gradients_gamma)
             else:
                 self.train_op_theta = optim_theta.minimize(self.loss_theta)
-                self.train_op_gamma = optim_theta.minimize(self.loss_gamma)
+
+            # Add gamma update ops
+            # Get gamma variables in generator form
+            gamma_vars = (var for var in tf.trainable_variables() if 'question_reader' in var.name)
+
+            # Define some variables required for the following loop and for generating the delta noise arrays later
+            self.delta_placeholder_shapes = []
+            self.delta_placeholders = []
+            self.update_gamma = None
+            self.add_delta_gamma = None
+            self.sub_delta_gamma = None
+
+            # Loop over all gamma variables and add required ops
+            for var in gamma_vars:
+                # Add summary
+                tf.summary.histogram(var.name, var)
+
+                # Get variable shape
+                self.delta_placeholder_shapes.append(var.shape)
+
+                # Create placeholder
+                delta_placeholder = tf.placeholder('float', shape=var.shape)
+                self.delta_placeholders.append(delta_placeholder)
+
+                # Create delta add and subtract ops
+                add_op = tf.assign_add(var, delta_placeholder)
+                sub_op = tf.assign_sub(var, delta_placeholder)
+
+                # Define gamma update op
+                update = self.learning_rate_gamma*(tf.reduce_mean(self.logprob_theta, 0) - self.mu)*delta_placeholder
+                new_update_op = tf.assign_sub(var, update)
+
+                tf.summary.histogram(var.name + '_update', update)
+
+                # Group add, subtract and update op
+                if self.update_gamma is not None:
+                    self.update_gamma = tf.group(new_update_op, self.update_gamma)
+                else:
+                    self.update_gamma = new_update_op
+
+                if self.add_delta_gamma is not None:
+                    self.add_delta_gamma = tf.group(add_op, self.add_delta_gamma)
+                else:
+                    self.add_delta_gamma = add_op
+
+                if self.sub_delta_gamma is not None:
+                    self.sub_delta_gamma = tf.group(sub_op, self.sub_delta_gamma)
+                else:
+                    self.sub_delta_gamma = sub_op
 
             # Add TensorBoard operations
             self.loss_theta_summary = tf.summary.scalar('Theta Loss', tf.reduce_mean(self.loss_theta, 0))
-            self.loss_gamma_summary = tf.summary.scalar('Gamma Loss', tf.reduce_mean(self.loss_gamma, 0))
 
             self.summary = tf.summary.merge_all()
 
@@ -135,12 +171,22 @@ class ReinforceModel(BaseModel):
         done = False
 
         while not done:  # TODO - done is never true so currently have infinite epoch size
-            # Get batch
-            batch, done = self.get_batch()
+            # Get batch  TODO - edit this to get batches of only cloze or only kbp
+            if self.lambda_frac > np.random.uniform():
+                # From KBP
+                batch, done = self.get_batch(cloze=False)
 
-            # Run train step to update theta and gamma
-            _, _, current_loss, summary = self.sess.run([self.train_op_theta, self.train_op_gamma,
-                                                         self.loss_theta, self.summary], feed_dict=batch)
+                # Run only the theta update
+                _, current_loss, summary = self.sess.run([self.train_op_theta,
+                                                          self.loss_theta, self.summary], feed_dict=batch)
+            else:
+                # From Cloze
+                batch, done = self.get_batch(cloze=True)
+
+                # Run both the theta and gamma updates
+                _, _, current_loss, summary = self.sess.run([self.train_op_theta, self.update_gamma,
+                                                             self.loss_theta, self.summary], feed_dict=batch)
+
             self.epoch_losses.append(np.mean(current_loss))
 
             # Perform baseline update
@@ -151,7 +197,9 @@ class ReinforceModel(BaseModel):
             self.summary_writer.add_summary(summary, self.summary_index)
             self.summary_index += 1
 
-    def get_batch(self):
+        # TODO - should validate/test at the end of each epoch to make sure it's not overfitting
+
+    def get_batch(self, cloze=False):
         """
         Gets a batch of data sampled from both kbp and cloze data according to regularisation parameter lambda.
         If the final data point of either the kbp or cloze data sets is reached while attempting to get a batch
@@ -171,9 +219,16 @@ class ReinforceModel(BaseModel):
 
         done = False
 
+        # Create noise feed dict
+        delta_feed_dict = {}
+        for placeholder, size in zip(self.delta_placeholders, self.delta_placeholder_shapes):
+            delta_feed_dict[placeholder] = np.random.normal(size=size)
+        if cloze:
+            # Add noise to gamma
+            self.sess.run(self.add_delta_gamma, feed_dict=delta_feed_dict)
+
         for _ in range(self.batch_size):
-            if self.lambda_frac > np.random.uniform():
-                print('kbp')  # TODO - delete
+            if not cloze:
                 # Take single example dict from kbp
                 sample = self.kbp_train_data[0]
 
@@ -183,9 +238,7 @@ class ReinforceModel(BaseModel):
                 self.epoch_counter += 1
                 if self.epoch_counter == len(self.kbp_train_data):
                     done = True
-
             else:
-                print('cloze')  # TODO - delete
                 while True:
                     # Get candidate from cloze data
                     sample = self.cloze_train_data[0]
@@ -197,14 +250,18 @@ class ReinforceModel(BaseModel):
                     select_predict = self.sess.run(self.preds_gamma, feed_dict={
                         self.placeholders['question']: sample[self.placeholders['question']],
                         self.placeholders['question_lengths']: sample[self.placeholders['question_lengths']]})
-                    print(select_predict[0][0])  # TODO - Delete
                     if np.random.uniform() > select_predict[0][0]:
                         break
-
             batch = capacities.extend_dict(batch, sample)
 
         # Make padding even
         capacities.listify_dict(batch)
         batch = numpify(batch)
+
+        # Add the delta feed dict to the batch feed dict
+        batch.update(delta_feed_dict)
+        if cloze:
+            # Subtract noise from gamma
+            self.sess.run(self.sub_delta_gamma, feed_dict=delta_feed_dict)
 
         return batch, done

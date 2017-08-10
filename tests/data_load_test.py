@@ -2,7 +2,7 @@ import tensorflow as tf
 import json
 from models import capacities
 
-maindir = 'C:\\Users\\Rogan Inglis\\OneDrive\\Documents\\Machine Learning\\Project\\Rogan-Project\\'
+maindir = 'C:\\Users\\rogan\\OneDrive\\Documents\\Machine Learning\\Project\\Rogan-Project\\'
 split_save_location = maindir + 'data\\split_data\\'
 data_dir = maindir + 'data\\'
 
@@ -24,8 +24,8 @@ filenames = [maindir + 'data\\kbpLocal_train_pos.json',
              maindir + 'data\\clozeLocal_train_neg.json']
 """
 
-"""
-filenames = [maindir + 'data\\clozeLocal_train-002.json']
+
+filenames = [maindir + 'data\\kbpLocal_train_pos.json']
 
 data_dict_list = []
 
@@ -34,7 +34,7 @@ for file in filenames:
         data_dict_list.append(json.load(data_file))
 
 # Split json and save
-split_size = 10000
+split_size = 100
 
 
 def chunker(seq, size):
@@ -44,14 +44,14 @@ data_chunks = chunker(data_dict_list[0]['instances'], split_size)
 
 for i, data_chunk in enumerate(data_chunks):
     new_dict = {'instances': data_chunk}
-    with open(split_save_location + 'clozeLocal_train_' + str(i) + '.json', 'w') as outfile:
+    with open(split_save_location + 'kbpLocal_train_pos_small' + str(i) + '.json', 'w') as outfile:
         json.dump(new_dict, outfile)
-"""
+
 
 """
 TRYING LOADING DATA FULLY
 """
-
+"""
 # Create placeholders
 placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="question"),
                 "question_lengths": tf.placeholder(tf.int32, [None], name="question_lengths"),
@@ -62,4 +62,4 @@ placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="questio
                 "targets": tf.placeholder(tf.int32, [None, None], name="targets")}
 
 data = capacities.load_data(placeholders, 1, data='cloze', data_dir=data_dir)
-
+"""

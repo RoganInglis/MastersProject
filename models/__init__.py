@@ -2,12 +2,14 @@ from models.base_model import BaseModel
 from models.basic_model import BasicModel
 from models.uniform_reinforce_model import UniformReinforceModel
 from models.reinforce_model import ReinforceModel
+from models.reinforce_model_black_box import ReinforceModelBlackBox
 
 __all__ = [
     "BaseModel",
     "BasicModel",
     "UniformReinforceModel",
-    "ReinforceModel"
+    "ReinforceModel",
+    "ReinforceModelBlackBox"
 ]
 
 

@@ -29,7 +29,7 @@ flags.DEFINE_string('fixed_params', "{}", 'JSON inputs to fix some params in a H
 
 
 # Model configuration
-flags.DEFINE_string('model_name', 'ReinforceModel', 'Unique name of the model')
+flags.DEFINE_string('model_name', 'ReinforceModelBlackBox', 'Unique name of the model')
 flags.DEFINE_boolean('best', False, 'Force to use the best known configuration')
 flags.DEFINE_float('learning_rate', 1e-3, 'The learning rate of SGD')
 flags.DEFINE_float('drop_keep_prob', 1.0, 'The dropout keep probability')
@@ -42,6 +42,7 @@ flags.DEFINE_string('clip_op', 'value', 'Set type of gradient clipping to use - 
 flags.DEFINE_float('learning_rate_gamma', 1e-3, 'The learning rate of SGD for the sampler parameter update')
 flags.DEFINE_float('lambda', 0.1, 'Generative regularisation strength')
 flags.DEFINE_float('alpha', 1e-1, 'The baseline update parameter')
+flags.DEFINE_float('epsilon', 1e-1, 'The initial exploration parameter value')
 
 # Training configuration
 flags.DEFINE_boolean('debug', False, 'Debug mode')
