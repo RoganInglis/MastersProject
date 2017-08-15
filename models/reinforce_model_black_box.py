@@ -265,3 +265,9 @@ class ReinforceModelBlackBox(BaseModel):
             self.sess.run(self.sub_delta_gamma, feed_dict=delta_feed_dict)
 
         return batch, done
+
+    def input_pipeline(self):
+
+        batch = []
+
+        return batch

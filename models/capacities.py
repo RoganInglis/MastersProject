@@ -4,7 +4,7 @@ from preproc.map import numpify, tokenize, notokenize, lower, deep_map, deep_seq
 import tensorflow as tf
 import numpy as np
 import json
-
+import os
 
 def dummy_data(sentences=None):
     data = {"question": ["method for task (qa, xxxxx)", "what method is used for qa"], "candidates": [["lstm", "lda", "reasoning"], ["lstm", "lda", "reasoning"]],
@@ -68,6 +68,7 @@ def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=N
     #train_data = dummy_data()
     #  TODO - could speed up and possibly reduce required memory by saving final result and reloading rather than going through whole process again
     if file is None:
+        """
         if data == 'kbp':
             if type == 'train':
                 train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
@@ -119,6 +120,12 @@ def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=N
                 raise Exception('type must be train, dev or test')
         else:
             raise Exception('data must be kbp or cloze')
+        """
+        list_of_dicts = []
+        path = 'data\\raw\\' + data + '\\' + type + '\\'
+        for file in os.listdir(path):
+            if file.endswith('.json'):
+                list_of_dicts.append(full_data(path + file))
 
         data = combine_data(list_of_dicts)
     else:
@@ -455,3 +462,43 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
         # in case LSTMCell: output_state_fw = (c_fw,h_fw), and output_state_bw = (c_bw,h_bw)
         # each [batch_size x max_seq_length x output_size]
         return outputs, states
+
+
+def _bytes_feature(value):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+
+def write_to_tfrecords(feed_dict_list, filename):
+    # Append filename extension
+    filename = filename + '.tfrecords'
+
+    # Define record writer
+    writer = tf.python_io.TFRecordWriter(filename)
+
+    # Iterate through feed dict list and write to file
+    for example_dict in feed_dict_list:
+        # Convert dict entries to features
+        feature = {}
+        for key in example_dict.keys():
+            feat = example_dict[key][0].astype(np.int32)
+            feature[key.op.name] = _bytes_feature(tf.compat.as_bytes(feat.tostring()))
+
+        # Create example protocol buffer
+        example = tf.train.Example(features=tf.train.Features(feature=feature))
+
+        # Serialise to string and write to file
+        writer.write(example.SerializeToString())
+
+    # Close writer
+    writer.close()
+
+
+def build_tfrecord_dataset(in_path=1 , out_path=1):
+    """
+    Needs to take some pointer to a set of files in json format and load, pre-process and re-save as a set of tfrecord files
+    Must also save a file containing the feature shapes and vocab object
+    :return:
+    """
+    # TODO - must load cloze and kbp at same time so that they share padding size and so that vocab can be created and saved correctly
+    # TODO - split records files so that no single file is too large? (not sure if necessary or not)
+    pass
