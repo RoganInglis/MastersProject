@@ -5,6 +5,8 @@ import tensorflow as tf
 import numpy as np
 import json
 import os
+import dill as pickle
+
 
 def dummy_data(sentences=None):
     data = {"question": ["method for task (qa, xxxxx)", "what method is used for qa"], "candidates": [["lstm", "lda", "reasoning"], ["lstm", "lda", "reasoning"]],
@@ -64,65 +66,12 @@ def process_data_dict(data_dict):
     return data
 
 
-def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
+def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, source='kbp', data_type='train',
+              data_dir='data\\raw\\'):
     #train_data = dummy_data()
-    #  TODO - could speed up and possibly reduce required memory by saving final result and reloading rather than going through whole process again
     if file is None:
-        """
-        if data == 'kbp':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'small_train':
-                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos_small.json')
-                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg_small.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg]
-            else:
-                raise Exception('type must be train, dev or test')
-        elif data == 'cloze':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
-                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'small_train':
-                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos_small.json')
-                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg_small.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
-                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
-                test_data = full_data(data_dir + 'clozeLocal_test.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg, test_data]
-            else:
-                raise Exception('type must be train, dev or test')
-        else:
-            raise Exception('data must be kbp or cloze')
-        """
         list_of_dicts = []
-        path = 'data\\raw\\' + data + '\\' + type + '\\'
+        path = data_dir + source + '\\' + data_type + '\\'
         for file in os.listdir(path):
             if file.endswith('.json'):
                 list_of_dicts.append(full_data(path + file))
@@ -144,49 +93,13 @@ def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=N
     return feed_dicts, vocab
 
 
-def load_data_dicts(vocab=None, extend_vocab=False, file=None, data='kbp', type='train', data_dir='data\\'):
+def load_data_dicts(vocab=None, extend_vocab=False, file=None, source='kbp', data_type='train', data_dir='data\\raw\\'):
     if file is None:
-        if data == 'kbp':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'kbpLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'kbpLocal_train_neg.json')
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'kbpLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'kbpLocal_dev_neg.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'kbpLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'kbpLocal_test_neg.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg]
-            else:
-                raise Exception('type must be train, dev or test')
-        elif data == 'cloze':
-            if type == 'train':
-                train_data_pos = full_data(data_dir + 'clozeLocal_train_pos.json')
-                train_data_neg = full_data(data_dir + 'clozeLocal_train_neg.json')
-                # train_data_002 = full_data('data\\clozeLocal_train-002.json') TODO - sort out loading of this, currently get memory error. Maybe use queues and tfrecords files?
-
-                list_of_dicts = [train_data_pos, train_data_neg]
-            elif type == 'dev':
-                dev_data_pos = full_data(data_dir + 'clozeLocal_dev_pos.json')
-                dev_data_neg = full_data(data_dir + 'clozeLocal_dev_neg.json')
-                dev_data = full_data(data_dir + 'clozeLocal_dev.json')
-
-                list_of_dicts = [dev_data_pos, dev_data_neg, dev_data]
-            elif type == 'test':
-                test_data_pos = full_data(data_dir + 'clozeLocal_test_pos.json')
-                test_data_neg = full_data(data_dir + 'clozeLocal_test_neg.json')
-                test_data = full_data(data_dir + 'clozeLocal_test.json')
-
-                list_of_dicts = [test_data_pos, test_data_neg, test_data]
-            else:
-                raise Exception('type must be train, dev or test')
-        else:
-            raise Exception('data must be kbp or cloze')
+        list_of_dicts = []
+        path = data_dir + source + '\\' + data_type + '\\'
+        for file in os.listdir(path):
+            if file.endswith('.json'):
+                list_of_dicts.append(full_data(path + file))
 
         data = combine_data(list_of_dicts)
     else:
@@ -493,12 +406,175 @@ def write_to_tfrecords(feed_dict_list, filename):
     writer.close()
 
 
-def build_tfrecord_dataset(in_path=1 , out_path=1):
+def write_to_tfrecords_in_chunks(feed_dict_list, base_filename, examples_per_file):
+    filename_counter = 0
+    for examples in chunker(feed_dict_list, examples_per_file):
+        filename = base_filename + str(filename_counter)
+        write_to_tfrecords(examples, filename)
+        filename_counter += 1
+
+
+def chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+
+def get_sizes_dict(dict_list):
+    data_dict = dict_list[0]
+
+    sizes_dict = {}
+    for key in data_dict.keys():
+        sizes_dict[key.op.name] = data_dict[key][0].shape
+
+    return sizes_dict
+
+
+def pad_list_of_dicts(list_of_dicts, dict_of_shapes):
+    for example_dict in list_of_dicts:
+        for key in example_dict.keys():
+            # Pad to shape
+            current_shape = example_dict[key][0].shape
+            shape = dict_of_shapes[key.op.name]
+            pad_tuple = tuple(((0, a_shape - current_a_shape) for a_shape, current_a_shape in zip(shape, current_shape)))
+            if pad_tuple != ():
+                example_dict[key][0] = np.pad(example_dict[key][0], pad_tuple, 'constant')
+    return list_of_dicts
+
+
+def get_max_sizes_dict(sizes_list):
+    max_sizes_dict = {}
+    for key in sizes_list[0].keys():
+        # Create list of sizes for key
+        key_sizes = [sizes[key] for sizes in sizes_list]
+
+        # Get max size
+        max_sizes_dict[key] = tuple(np.max(np.array(key_sizes), axis=0))
+    return max_sizes_dict
+
+
+def save_obj(obj, name):
+    with open(name + '.pkl', 'wb') as f:
+        pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
+
+
+def load_obj(name):
+    with open(name + '.pkl', 'rb') as f:
+        return pickle.load(f)
+
+
+def build_tfrecord_dataset(in_path='data\\raw\\' , out_path='data\\tfrecords\\', examples_per_file=1024):
     """
     Needs to take some pointer to a set of files in json format and load, pre-process and re-save as a set of tfrecord files
     Must also save a file containing the feature shapes and vocab object
     :return:
     """
-    # TODO - must load cloze and kbp at same time so that they share padding size and so that vocab can be created and saved correctly
+    # TODO - must load cloze and kbp at same time (so that they share padding size?) and so that vocab can be created and saved correctly
     # TODO - split records files so that no single file is too large? (not sure if necessary or not)
-    pass
+    # Create placeholders
+    placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="question"),
+                    "question_lengths": tf.placeholder(tf.int32, [None], name="question_lengths"),
+                    "candidates": tf.placeholder(tf.int32, [None, None], name="candidates"),
+                    "support": tf.placeholder(tf.int32, [None, None, None], name="support"),
+                    "support_lengths": tf.placeholder(tf.int32, [None, None], name="support_lengths"),
+                    "answers": tf.placeholder(tf.int32, [None], name="answers"),
+                    "targets": tf.placeholder(tf.int32, [None, None], name="targets")}
+
+    sizes_list = []
+
+    # Get sizes (this step will take a while)
+    for source in ['kbp', 'cloze']:
+        for data_type in ['train', 'dev', 'test']:
+            # Load
+            data, _ = load_data(placeholders, 1, source=source, data_type=data_type,
+                                data_dir=in_path)
+
+            # Add Cloze sizes to sizes list
+            sizes_list.append(get_sizes_dict(data))
+
+    data = None
+
+    # Get max of sizes
+    shapes = get_max_sizes_dict(sizes_list)
+
+    # First load training data and build vocab
+    kbp_train_data, vocab = load_data(placeholders, 1, source='kbp', data_type='train', data_dir=in_path)
+
+    # Pad data
+    kbp_train_data = pad_list_of_dicts(kbp_train_data, shapes)
+
+    # Save kbp training data as tfrecords
+    write_to_tfrecords_in_chunks(kbp_train_data, out_path + 'kbp\\train\\train_kbp', examples_per_file)
+
+    # Add KBP sizes to sizes list
+    sizes_list.append(get_sizes_dict(kbp_train_data))
+
+    # Delete KBP training data from memory
+    kbp_train_data = None
+
+    cloze_train_data, vocab = load_data(placeholders, 1, vocab=vocab, extend_vocab=True, source='cloze',
+                                        data_type='train', data_dir=in_path)  # TODO - appears to not load the whole of the data (loads the same amount as for kbp so maybe reaching a limit for that as well?), maybe try splitting jsons before hand
+
+    # Pad data
+    cloze_train_data = pad_list_of_dicts(cloze_train_data, shapes)
+
+    # Save cloze training data as tfrecords
+    write_to_tfrecords_in_chunks(cloze_train_data, out_path + 'cloze\\train\\train_cloze', examples_per_file)
+
+    # Add Cloze sizes to sizes list
+    sizes_list.append(get_sizes_dict(cloze_train_data))
+
+    # Delete cloze training data from memory
+    cloze_train_data = None
+
+    # Load dev and test kbp and cloze using vocab from train
+    data_list = ['dev', 'test']
+    source_list = ['kbp', 'cloze']
+    for data_type in data_list:
+        for source in source_list:
+            # Load
+            data, _ = load_data(placeholders, 1, vocab=vocab, extend_vocab=False, source=source, data_type=data_type,
+                                data_dir=in_path)
+
+            # Pad data
+            data = pad_list_of_dicts(data, shapes)
+
+            # Save as tfrecords
+            write_to_tfrecords_in_chunks(data, out_path + source + '\\' + data_type + '\\' + data_type + '_' + source,
+                                         examples_per_file)
+
+    # Delete
+    data = None
+
+    # Save shapes and vocab as pkl
+    shapes_vocab = {'shapes': shapes, 'vocab': vocab}
+    save_obj(shapes_vocab, out_path + 'shapes_vocab')
+
+
+def create_dict_of_filename_lists(data_dir):
+    # Get folder names in data_dir to use as dict keys
+    sub_dirs = [name for name in os.listdir(data_dir) if os.path.isdir(data_dir + name)]
+
+    # Get tfrecords filenames
+    tfrecords_filenames = [data_dir + file for file in os.listdir(data_dir) if file.endswith('.tfrecords')]
+
+    # Fill dict with lists of filenames (or dicts if more folders)
+    if sub_dirs:
+        dict_of_filename_lists = {}
+        for sub_dir in sub_dirs:
+            dict_of_filename_lists[sub_dir] = create_dict_of_filename_lists(data_dir + sub_dir + '/')
+    else:
+        dict_of_filename_lists = tfrecords_filenames
+
+    return dict_of_filename_lists
+
+
+def stack_array_lists_in_dict(dict_of_lists):
+    for key in dict_of_lists.keys():
+        if dict_of_lists[key][0].shape is not ():
+            dict_of_lists[key] = np.stack(dict_of_lists[key])
+        else:
+            dict_of_lists[key] = np.array(dict_of_lists[key])
+    return dict_of_lists
+
+
+if __name__ is '__main__':
+    print('test')

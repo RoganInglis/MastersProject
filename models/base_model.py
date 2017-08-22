@@ -28,7 +28,12 @@ class BaseModel(object):
 
         # All models share some basics hyper parameters, this is the section where we
         # copy them into the model
+        self.num_threads = self.config['num_threads']
         self.result_dir = self.config['result_dir']
+        self.dev_result_dir = self.config['dev_result_dir']
+        self.dev_summary_batch_size = self.config['dev_summary_batch_size']
+        self.dev_summary_interval = self.config['dev_summary_interval']
+        self.data_dir = self.config['data_dir']
         self.max_iter = self.config['max_iter']
         self.drop_keep_prob = self.config['drop_keep_prob']
         self.learning_rate = self.config['learning_rate']
@@ -49,6 +54,14 @@ class BaseModel(object):
         # will override this function completely
         self.set_model_props(config)
 
+        # Load vocab and shapes
+        shapes_vocab = capacities.load_obj(self.data_dir + 'shapes_vocab')
+        self.shapes = shapes_vocab['shapes']
+        self.vocab = shapes_vocab['vocab']
+
+        # Create dict of filename lists for tfrecords input pipeline
+        self.data_filenames = capacities.create_dict_of_filename_lists(self.data_dir)
+
         # Again, child Model should provide its own build_graph function
         self.graph = self.build_graph(tf.Graph())
 
@@ -56,14 +69,14 @@ class BaseModel(object):
         # can be added this way, here
         with self.graph.as_default():
             self.saver = tf.train.Saver(max_to_keep=50)
-            self.init_op = tf.global_variables_initializer()
+            self.init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
 
         # Add all the other common code for the initialization here
         gpu_options = tf.GPUOptions(allow_growth=True)
         sess_config = tf.ConfigProto(gpu_options=gpu_options)
         self.sess = tf.Session(config=sess_config, graph=self.graph)
         self.summary_writer = tf.summary.FileWriter(self.result_dir, self.sess.graph)
-
+        self.dev_summary_writer = tf.summary.FileWriter(self.dev_result_dir, self.sess.graph)
         # This function is not always common to all models, that's why it's again
         # separated from the __init__ one
         self.init()
@@ -131,4 +144,7 @@ class BaseModel(object):
             if self.config['debug']:
                 print('Loading the model from folder: %s' % self.result_dir)
             self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
+
+        self.coord = tf.train.Coordinator()
+        self.threads = tf.train.start_queue_runners(coord=self.coord, sess=self.sess)
 

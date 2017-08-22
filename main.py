@@ -52,7 +52,12 @@ flags.DEFINE_boolean('infer', False, 'Load a model for inference')
 # This is very important for TensorBoard
 # each model will end up in its own unique folder using time module
 # Obviously one can also choose to name the output folder
+flags.DEFINE_integer('num_threads', 1, 'Number of threads to be used for each input pipeline')
+flags.DEFINE_string('data_dir', 'data/tfrecords/', 'Top level directory for the tfrecords data')
 flags.DEFINE_string('result_dir', dir + '/results/' + flags.FLAGS.model_name + '/' + str(int(time.time())), 'Name of the directory to store/log the model (if it exists, the model will be loaded from it)')
+flags.DEFINE_string('dev_result_dir', dir + '/results/' + flags.FLAGS.model_name + '/' + str(int(time.time())) + '/dev', 'Name of the directory to store/log the model dev results (if it exists, the model will be loaded from it)')
+flags.DEFINE_integer('dev_summary_batch_size', 128, 'Batch size to use when computing dev accuracy')
+flags.DEFINE_integer('dev_summary_interval', 10, 'Interval at which to compute dev accuracy and update summary during training')
 
 # Another important point, you must provide an access to the random seed
 # to be able to fully reproduce an experiment

@@ -81,11 +81,11 @@ placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="questio
                 "answers": tf.placeholder(tf.int32, [None], name="answers"),
                 "targets": tf.placeholder(tf.int32, [None, None], name="targets")}
 
-kbp_feed_dicts, _ = capacities.load_data(placeholders, 1, data='kbp', type='small_train')
+kbp_feed_dicts, _ = capacities.load_data(placeholders, 1, source='kbp', data_type='small_train')
 
 filename = 'data/tfrecords_test'
 
-# Get sizes and types
+# Get sizes
 feature_size_dict = {}
 for key in kbp_feed_dicts[0].keys():
     key_name = key.op.name

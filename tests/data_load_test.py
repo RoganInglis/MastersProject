@@ -14,7 +14,7 @@ filenames = [maindir + 'data\\kbpLocal_train_pos.json',
              maindir + 'data\\kbpLocal_train_neg.json',
              maindir + 'data\\clozeLocal_train_pos.json',
              maindir + 'data\\clozeLocal_train_neg.json',
-             maindir + 'data\\clozeLocal_train-002.json']
+             maindir + 'data\\clozeLocal_train_002.json']
 """
 
 """
