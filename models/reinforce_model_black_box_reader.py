@@ -6,7 +6,7 @@ from models import capacities
 from models import BaseModel
 
 
-class ReinforceModelBlackBox(BaseModel):
+class ReinforceModelBlackBoxReader(BaseModel):
     def set_model_props(self, config):
         self.learning_rate_gamma = config['learning_rate_gamma']
         self.lambda_value = config['lambda']
@@ -14,14 +14,7 @@ class ReinforceModelBlackBox(BaseModel):
         self.alpha = config['alpha']
 
         # Initialise parameters
-        len_gamma = 3
-        self.gamma = np.ones(len_gamma)
-        self.mu = 0.
-
-        self.delta = np.zeros(len_gamma)
-
-        self.gamma_noise = self.gamma
-        self.gamma_noise_distribution = self.gamma
+        self.mu = 0
 
         self.epoch_counter = 0
 
@@ -55,20 +48,11 @@ class ReinforceModelBlackBox(BaseModel):
 
             self.epoch_loss = tf.placeholder(tf.float32)
 
-            # Create additional placeholder for gamma
-            self.gamma_placeholder = tf.placeholder('float', [None])
-            tf.summary.histogram('Gamma', self.gamma_placeholder)
-
             # Create input pipelines
             self.kbp_batch = dict()
             self.cloze_batch = dict()
             self.kbp_batch['train'] = self.input_pipeline(self.data_filenames['kbp']['train'])
-
-            # One for each
-            self.cloze_batch['train'] = []
-            self.cloze_batch['train'].append(self.input_pipeline(self.data_filenames['cloze']['train']['group_0']))
-            self.cloze_batch['train'].append(self.input_pipeline(self.data_filenames['cloze']['train']['group_1']))
-            self.cloze_batch['train'].append(self.input_pipeline(self.data_filenames['cloze']['train']['group_2']))
+            self.cloze_batch['train'] = self.input_pipeline(self.data_filenames['cloze']['train']['files'])
 
             self.kbp_batch['dev'] = self.input_pipeline(self.data_filenames['kbp']['dev'])
             self.cloze_batch['dev'] = self.input_pipeline(self.data_filenames['cloze']['dev'])
@@ -106,6 +90,13 @@ class ReinforceModelBlackBox(BaseModel):
 
             self.accuracy_summary = tf.summary.scalar('accuracy', self.accuracy)
 
+            # Define cloze sampler reader
+            with tf.variable_scope('question_reader'):
+                self.logits_gamma, self.selection, self.preds_gamma = capacities.question_reader(self.placeholders,
+                                                                                                 self.inputs_embedded,
+                                                                                                 self.emb_dim,
+                                                                                                 drop_keep_prob=self.drop_keep_prob)
+
             # Define cloze sampler reader loss
             targets_index = tf.transpose(
                 tf.stack([tf.range(self.batch_size), tf.to_int32(tf.argmax(self.placeholders['targets'], 1))]))
@@ -130,6 +121,57 @@ class ReinforceModelBlackBox(BaseModel):
                 self.train_op_theta = optim_theta.apply_gradients(capped_gradients_theta)
             else:
                 self.train_op_theta = optim_theta.minimize(self.loss_theta)
+
+            # Add gamma update ops
+            # Get gamma variables in generator form
+            gamma_vars = (var for var in tf.trainable_variables() if 'question_reader' in var.name)
+
+            # Define some variables required for the following loop and for generating the delta noise arrays later
+            self.delta_placeholder_shapes = []
+            self.delta_placeholders = []
+            self.update_gamma = None
+            self.add_delta_gamma = None
+            self.sub_delta_gamma = None
+
+            # Loop over all gamma variables and add required ops
+            with tf.variable_scope('question_reader_update_ops'):
+                for var in gamma_vars:
+                    # Add summary
+                    tf.summary.histogram(var.name, var)
+
+                    # Get variable shape
+                    self.delta_placeholder_shapes.append(var.shape)
+
+                    # Create placeholder
+                    delta_placeholder = tf.placeholder('float', shape=var.shape)
+                    self.delta_placeholders.append(delta_placeholder)
+
+                    # Create delta add and subtract ops
+                    add_op = tf.assign_add(var, delta_placeholder)
+                    sub_op = tf.assign_sub(var, delta_placeholder)
+
+                    # Define gamma update op
+                    update = self.learning_rate_gamma * (
+                    tf.reduce_mean(self.logprob_theta, 0) - self.mu) * delta_placeholder
+                    new_update_op = tf.assign_sub(var, update)
+
+                    tf.summary.histogram(var.name + '_update', update)
+
+                    # Group add, subtract and update op
+                    if self.update_gamma is not None:
+                        self.update_gamma = tf.group(new_update_op, self.update_gamma)
+                    else:
+                        self.update_gamma = new_update_op
+
+                    if self.add_delta_gamma is not None:
+                        self.add_delta_gamma = tf.group(add_op, self.add_delta_gamma)
+                    else:
+                        self.add_delta_gamma = add_op
+
+                    if self.sub_delta_gamma is not None:
+                        self.sub_delta_gamma = tf.group(sub_op, self.sub_delta_gamma)
+                    else:
+                        self.sub_delta_gamma = sub_op
 
             # Add TensorBoard operations
             self.loss_theta_summary = tf.summary.scalar('Theta Loss', tf.reduce_mean(self.loss_theta, 0))
@@ -179,31 +221,18 @@ class ReinforceModelBlackBox(BaseModel):
                 # Run only the theta update
                 _, current_loss, summary = self.sess.run([self.train_op_theta,
                                                           self.loss_theta, self.summary], feed_dict=batch)
-
-                logprob = self.sess.run(self.logprob_theta, feed_dict=batch)
             else:
-                # Add noise to gamma
-                self.delta = np.random.normal(size=len(self.gamma))
-
-                self.gamma_noise = self.gamma + self.delta
-
-                self.gamma_noise_distribution = capacities.vector_to_distribution(self.gamma_noise)
-
                 # From Cloze
                 batch, done = self.get_batch(cloze=True)
 
                 # Run both the theta and gamma updates
-                _, current_loss, summary = self.sess.run([self.train_op_theta,
-                                                          self.loss_theta, self.summary], feed_dict=batch)
-
-                # Update gamma
-                logprob = self.sess.run(self.logprob_theta, feed_dict=batch)
-                gamma_update = self.learning_rate_gamma * (np.mean(logprob) - self.mu) * self.delta
-                self.gamma -= gamma_update
+                _, _, current_loss, summary = self.sess.run([self.train_op_theta, self.update_gamma,
+                                                             self.loss_theta, self.summary], feed_dict=batch)
 
             self.epoch_losses.append(np.mean(current_loss))
 
             # Perform baseline update
+            logprob = self.sess.run(self.logprob_theta, feed_dict=batch)
             self.mu = self.alpha * self.mu + (1 - self.alpha) * np.mean(logprob)
 
             # Run batch TensorBoard operations here if necessary
@@ -233,6 +262,14 @@ class ReinforceModelBlackBox(BaseModel):
 
         done = False
 
+        # Create noise feed dict
+        delta_feed_dict = dict()
+        for placeholder, size in zip(self.delta_placeholders, self.delta_placeholder_shapes):
+            delta_feed_dict[placeholder] = np.random.normal(size=size)
+        if cloze:
+            # Add noise to gamma
+            self.sess.run(self.add_delta_gamma, feed_dict=delta_feed_dict)
+
         for _ in range(batch_size):
             try:
                 if not cloze:
@@ -242,21 +279,18 @@ class ReinforceModelBlackBox(BaseModel):
                     sample = self.batch_list_to_feed_dict(sample_list)
 
                 else:
-                    if data_type is 'train':
-                        # Select group to take sample from according to gamma vector
-                        # Turn gamma into a multinomial distribution
-                        cloze_group = np.random.choice(int(len(self.gamma)), p=self.gamma_noise_distribution)
-
-                        # Get sample from correct cloze data group
-                        sample_ops_list = self.batch_dict_to_list(self.cloze_batch[data_type][cloze_group])
-                        sample_list = self.sess.run(sample_ops_list)
-                        sample = self.batch_list_to_feed_dict(sample_list)
-                    else:
-                        # Get sample from correct cloze data group
+                    while True:
+                        # Get candidate from cloze data
                         sample_ops_list = self.batch_dict_to_list(self.cloze_batch[data_type])
                         sample_list = self.sess.run(sample_ops_list)
                         sample = self.batch_list_to_feed_dict(sample_list)
 
+                        # Select sample
+                        select_predict = self.sess.run(self.preds_gamma, feed_dict={
+                            self.placeholders['question']: sample[self.placeholders['question']],
+                            self.placeholders['question_lengths']: sample[self.placeholders['question_lengths']]})
+                        if np.random.uniform() > select_predict[0][0]:
+                            break
                 batch = capacities.extend_dict(batch, sample)
             except Exception as ex:
                 self.coord.request_stop(ex)
@@ -265,7 +299,11 @@ class ReinforceModelBlackBox(BaseModel):
         # Concatenate batch
         batch = capacities.stack_array_lists_in_dict(batch)
 
-        batch[self.gamma_placeholder] = self.gamma
+        # Add the delta feed dict to the batch feed dict
+        batch.update(delta_feed_dict)
+        if cloze:
+            # Subtract noise from gamma
+            self.sess.run(self.sub_delta_gamma, feed_dict=delta_feed_dict)
 
         return batch, done
 

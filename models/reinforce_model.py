@@ -10,12 +10,11 @@ class ReinforceModel(BaseModel):
     def set_model_props(self, config):
         self.learning_rate_gamma = config['learning_rate_gamma']
         self.lambda_value = config['lambda']
-        self.lambda_frac = 1/(1 + self.lambda_value)
+        self.lambda_frac = 1 / (1 + self.lambda_value)
         self.alpha = config['alpha']
-        self.epsilon = config['epsilon']
 
         # Initialise parameters
-        self.mu = 0  # TODO - depends if batch size > 1 can be used, but random initialisation
+        self.mu = 0
 
         self.epoch_counter = 0
 
@@ -53,7 +52,7 @@ class ReinforceModel(BaseModel):
             self.kbp_batch = dict()
             self.cloze_batch = dict()
             self.kbp_batch['train'] = self.input_pipeline(self.data_filenames['kbp']['train'])
-            self.cloze_batch['train'] = self.input_pipeline(self.data_filenames['cloze']['train'])
+            self.cloze_batch['train'] = self.input_pipeline(self.data_filenames['cloze']['train']['files'])
 
             self.kbp_batch['dev'] = self.input_pipeline(self.data_filenames['kbp']['dev'])
             self.cloze_batch['dev'] = self.input_pipeline(self.data_filenames['cloze']['dev'])
@@ -78,10 +77,11 @@ class ReinforceModel(BaseModel):
 
             # Define bicond reader model
             with tf.variable_scope('bicond_reader'):
-                self.logits_theta, self.loss_theta, self.preds_theta = capacities.bicond_reader_embedded(self.placeholders,
-                                                                                             self.inputs_embedded,
-                                                                                             self.emb_dim,
-                                                                                             drop_keep_prob=self.drop_keep_prob)
+                self.logits_theta, self.loss_theta, self.preds_theta = capacities.bicond_reader_embedded(
+                    self.placeholders,
+                    self.inputs_embedded,
+                    self.emb_dim,
+                    drop_keep_prob=self.drop_keep_prob)
 
             prediction = tf.argmax(self.preds_theta, 1)
             targets = tf.argmax(self.placeholders['targets'], 1)
@@ -95,13 +95,15 @@ class ReinforceModel(BaseModel):
                                                                                                  self.inputs_embedded,
                                                                                                  self.emb_dim,
                                                                                                  drop_keep_prob=self.drop_keep_prob)
-            
+
             # Define cloze sampler reader loss
-            targets_index = tf.transpose(tf.stack([tf.range(self.batch_size), tf.to_int32(tf.argmax(self.placeholders['targets'], 1))]))
+            targets_index = tf.transpose(
+                tf.stack([tf.range(self.batch_size), tf.to_int32(tf.argmax(self.placeholders['targets'], 1))]))
             self.logprob_theta = tf.log(tf.gather_nd(self.preds_theta, targets_index))
 
-            self.loss_gamma = tf.log(self.preds_gamma[:, 1])*tf.stop_gradient(self.logprob_theta - self.mu)  # TODO - Double check this is correct; is using loss_theta correct and is the preds_gamma part correct
-            
+            self.loss_gamma = tf.log(self.preds_gamma[:, 1]) * tf.stop_gradient(
+                self.logprob_theta - self.mu)
+
             # Add train step
             optim_theta = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
             # optim_theta = tf.train.AdadeltaOptimizer(learning_rate=
@@ -109,7 +111,8 @@ class ReinforceModel(BaseModel):
             optim_gamma = tf.train.AdamOptimizer(learning_rate=self.learning_rate_gamma)
 
             if self.l2 != 0.0:
-                self.loss_theta = self.loss_theta + tf.add_n([tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
+                self.loss_theta = self.loss_theta + tf.add_n(
+                    [tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
                 self.loss_gamma = self.loss_gamma + tf.add_n(
                     [tf.nn.l2_loss(v) for v in tf.trainable_variables()]) * self.l2
 
@@ -118,12 +121,12 @@ class ReinforceModel(BaseModel):
                 gradients_gamma = optim_gamma.compute_gradients(self.loss_gamma)
                 if self.clip_op == tf.clip_by_value:
                     capped_gradients_theta = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
-                                        for grad, var in gradients_theta]
+                                              for grad, var in gradients_theta]
                     capped_gradients_gamma = [(tf.clip_by_value(grad, self.clip[0], self.clip[1]), var)
                                               for grad, var in gradients_gamma]
                 elif self.clip_op == tf.clip_by_norm:
                     capped_gradients_theta = [(tf.clip_by_norm(grad, self.clip), var)
-                                        for grad, var in gradients_theta]
+                                              for grad, var in gradients_theta]
                     capped_gradients_gamma = [(tf.clip_by_norm(grad, self.clip), var)
                                               for grad, var in gradients_gamma]
                 self.train_op_theta = optim_theta.apply_gradients(capped_gradients_theta)
@@ -148,9 +151,9 @@ class ReinforceModel(BaseModel):
     def learn_from_epoch(self):
         self.epoch_losses = []
         done = False
-        best_dev_loss = 0
+        best_dev_loss = 10
 
-        while not done:  # TODO - done is never true so currently have infinite epoch size
+        while not done:
             if self.summary_index % self.dev_summary_interval == 0 or self.summary_index == 0:
                 _, dev_loss = self.compute_loss_accuracy(self.dev_summary_batch_size)
                 if dev_loss < best_dev_loss:
@@ -167,7 +170,8 @@ class ReinforceModel(BaseModel):
 
             # Perform baseline update
             logprob = self.sess.run(self.logprob_theta, feed_dict=batch)
-            self.mu = self.alpha*self.mu + (1 - self.alpha)*np.mean(logprob)  # TODO - Taking mean of logprob for batch sizes greater than 1, for same batch as used for previous update; double check this is correct
+            self.mu = self.alpha * self.mu + (1 - self.alpha) * np.mean(
+                logprob)
 
             # Run batch TensorBoard operations here if necessary
             self.summary_writer.add_summary(summary, self.summary_index)
@@ -194,7 +198,7 @@ class ReinforceModel(BaseModel):
                  self.placeholders['support_lengths']: [],
                  self.placeholders['targets']: []}
 
-        done = False  # TODO - done is never true. may not be an issue as epochs are now managed by the input pipeline, but should clean the code in that case
+        done = False
 
         for _ in range(batch_size):
             if self.lambda_frac > np.random.uniform() or data_type is not 'train':
@@ -223,7 +227,7 @@ class ReinforceModel(BaseModel):
 
         return batch, done
 
-    def input_pipeline(self, filename_list, batch_size=1):
+    def input_pipeline(self, filename_list, batch_size=1, num_epochs=None):
         # Create feature dict to be populated
         feature = dict()
         for key in self.shapes.keys():

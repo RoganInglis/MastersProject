@@ -48,6 +48,8 @@ class BaseModel(object):
         else:
             raise Exception('clip_op must be value or norm')
 
+        self.placeholder_keys = []
+
 
         # Now the child Model needs some custom parameters, to avoid any
         # inheritance hell with the __init__ function, the model
@@ -103,6 +105,9 @@ class BaseModel(object):
     def infer(self):
         raise Exception('The infer function must be overriden by the agent')
 
+    def test(self):
+        raise Exception('The test function must be overriden by the agent')
+
     def learn_from_epoch(self):
         # I like to separate the function to train per epoch and the function to train globally
         raise Exception('The learn_from_epoch function must be overriden by the agent')
@@ -143,8 +148,53 @@ class BaseModel(object):
         else:
             if self.config['debug']:
                 print('Loading the model from folder: %s' % self.result_dir)
+            self.sess.run(self.init_op)
             self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
 
         self.coord = tf.train.Coordinator()
         self.threads = tf.train.start_queue_runners(coord=self.coord, sess=self.sess)
+
+    def input_pipeline(self, filename_list, batch_size=1, num_epochs=None):
+        if num_epochs is None:
+            num_epochs = self.max_iter
+
+        # Remove non-string entries in filename_list
+        filename_list = [x for x in filename_list if type(x) is str]
+
+        # Create feature dict to be populated
+        feature = dict()
+        for key in self.shapes.keys():
+            feature[key] = tf.FixedLenFeature([], tf.string)
+
+        # Create queue from filename list
+        filename_queue = tf.train.string_input_producer(filename_list, num_epochs=num_epochs)
+
+        # Define reader
+        reader = tf.TFRecordReader()
+
+        # Read next record
+        _, serialized_example = reader.read(filename_queue)
+
+        # Decode record
+        features = tf.parse_single_example(serialized_example, features=feature)
+
+        # Convert strings back to numbers
+        tensor_list = []
+        for key in self.placeholder_keys:
+            tensor = tf.decode_raw(features[key], tf.int32)
+
+            # Reshape
+            tensor = tf.reshape(tensor, self.shapes[key])
+
+            # Append to tensor list
+            tensor_list.append(tensor)
+
+        # Create batches by randomly shuffling tensors
+        batch = tf.train.shuffle_batch(tensor_list, batch_size=batch_size, capacity=32, num_threads=self.num_threads,
+                                       min_after_dequeue=8)
+        batch_dict = dict()
+        for i, key in enumerate(self.placeholder_keys):
+            batch_dict[key] = batch[i]
+
+        return batch_dict
 

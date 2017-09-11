@@ -40,20 +40,17 @@ class BasicModel(BaseModel):
 
             self.epoch_loss = tf.placeholder(tf.float32)
 
-            # Load training data (or at least get vocab)
-            #self.kbp_train_feed_dicts, self.vocab = capacities.load_data(self.placeholders, self.batch_size)  # TODO - edit this to get all data properly
-
             # Create input pipelines
             self.kbp_batch = dict()
             self.cloze_batch = dict()
             self.kbp_batch['train'] = self.input_pipeline(self.data_filenames['kbp']['train'])
-            self.cloze_batch['train'] = self.input_pipeline(self.data_filenames['cloze']['train'])
+            self.cloze_batch['train'] = self.input_pipeline(self.data_filenames['cloze']['train']['files'])
 
             self.kbp_batch['dev'] = self.input_pipeline(self.data_filenames['kbp']['dev'])
             self.cloze_batch['dev'] = self.input_pipeline(self.data_filenames['cloze']['dev'])
 
-            self.kbp_batch['test'] = self.input_pipeline(self.data_filenames['kbp']['test'])
-            self.cloze_batch['test'] = self.input_pipeline(self.data_filenames['cloze']['test'])
+            self.kbp_batch['test'] = self.input_pipeline(self.data_filenames['kbp']['test'], num_epochs=1)
+            self.cloze_batch['test'] = self.input_pipeline(self.data_filenames['cloze']['test'], num_epochs=1)
 
             # Define bicond reader model
             with tf.variable_scope('bicond_reader'):
@@ -62,7 +59,8 @@ class BasicModel(BaseModel):
 
             prediction = tf.argmax(self.preds_theta, 1)
             targets = tf.argmax(self.placeholders['targets'], 1)
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(prediction, targets), tf.float32))
+            self.correct = tf.cast(tf.equal(prediction, targets), tf.float32)
+            self.accuracy = tf.reduce_mean(self.correct)
 
             self.accuracy_summary = tf.summary.scalar('accuracy', self.accuracy)
 
@@ -93,17 +91,35 @@ class BasicModel(BaseModel):
 
         return graph
 
+    def test(self):
+        correct_list = []
+        done = False
+        while not done:
+            # Get test batch
+            batch, done = self.get_batch(data_type='test')
+
+            # Compute batch accuracy and correct
+            correct = self.sess.run(self.correct, feed_dict=batch)
+
+            correct_list.append(correct)
+
+        total_correct = np.concatenate(correct_list, 0)
+        total_accuracy = np.mean(total_correct)
+        print(total_accuracy)
+
+        return total_correct, total_accuracy
+
     def infer(self):
         print('still to implement infer')
 
     def learn_from_epoch(self):
         self.epoch_losses = []
         done = False
-        best_dev_loss = 0
+        best_dev_loss = 10
 
-        while not done:  # TODO - done is never true so currently have infinite epoch size. due to working with tfrecords and queues, may be better to think in iterations only rather than epochs
+        while not done:
             if self.summary_index % self.dev_summary_interval == 0 or self.summary_index == 0:
-                _, dev_loss = self.compute_loss_accuracy(self.dev_summary_batch_size)
+                dev_loss, _ = self.compute_loss_accuracy(self.dev_summary_batch_size)
                 if dev_loss < best_dev_loss:
                     self.save()
                     best_dev_loss = dev_loss
@@ -148,65 +164,31 @@ class BasicModel(BaseModel):
                  self.placeholders['support_lengths']: [],
                  self.placeholders['targets']: []}
 
-        done = False  # TODO - done is never true. may not be an issue as epochs are now managed by the input pipeline, but should clean the code in that case
+        done = False
 
         for _ in range(batch_size):
-            if not cloze:
-                # Take single example dict from kbp
-                sample_ops_list = self.batch_dict_to_list(self.kbp_batch[data_type])
-                sample_list = self.sess.run(sample_ops_list)
-                sample = self.batch_list_to_feed_dict(sample_list)
+            try:
+                if not cloze:
+                    # Take single example dict from kbp
+                    sample_ops_list = self.batch_dict_to_list(self.kbp_batch[data_type])
+                    sample_list = self.sess.run(sample_ops_list)
+                    sample = self.batch_list_to_feed_dict(sample_list)
 
-            else:
-                # Get candidate from cloze data
-                sample_ops_list = self.batch_dict_to_list(self.cloze_batch[data_type])
-                sample_list = self.sess.run(sample_ops_list)
-                sample = self.batch_list_to_feed_dict(sample_list)
+                else:
+                    # Get candidate from cloze data
+                    sample_ops_list = self.batch_dict_to_list(self.cloze_batch[data_type])
+                    sample_list = self.sess.run(sample_ops_list)
+                    sample = self.batch_list_to_feed_dict(sample_list)
 
-            batch = capacities.extend_dict(batch, sample)
+                batch = capacities.extend_dict(batch, sample)
+            except Exception as ex:
+                self.coord.request_stop(ex)
+                done = True
 
         # Concatenate batch
         batch = capacities.stack_array_lists_in_dict(batch)
 
         return batch, done
-
-    def input_pipeline(self, filename_list, batch_size=1):
-        # Create feature dict to be populated
-        feature = dict()
-        for key in self.shapes.keys():
-            feature[key] = tf.FixedLenFeature([], tf.string)
-
-        # Create queue from filename list
-        filename_queue = tf.train.string_input_producer(filename_list, num_epochs=self.max_iter)
-
-        # Define reader
-        reader = tf.TFRecordReader()
-
-        # Read next record
-        _, serialized_example = reader.read(filename_queue)
-
-        # Decode record
-        features = tf.parse_single_example(serialized_example, features=feature)
-
-        # Convert strings back to numbers
-        tensor_list = []
-        for key in self.placeholder_keys:
-            tensor = tf.decode_raw(features[key], tf.int32)
-
-            # Reshape
-            tensor = tf.reshape(tensor, self.shapes[key])
-
-            # Append to tensor list
-            tensor_list.append(tensor)
-
-        # Create batches by randomly shuffling tensors
-        batch = tf.train.shuffle_batch(tensor_list, batch_size=batch_size, capacity=32, num_threads=self.num_threads,
-                                       min_after_dequeue=8)
-        batch_dict = dict()
-        for i, key in enumerate(self.placeholder_keys):
-            batch_dict[key] = batch[i]
-
-        return batch_dict
 
     def batch_dict_to_list(self, batch_dict):
         batch_list = []
@@ -231,6 +213,6 @@ class BasicModel(BaseModel):
         # Write summary
         self.dev_summary_writer.add_summary(dev_summary, self.summary_index)
 
-        return dev_loss, dev_accuracy
+        return np.mean(dev_loss), dev_accuracy
 
 

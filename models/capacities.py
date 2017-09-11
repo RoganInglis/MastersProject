@@ -1,14 +1,18 @@
 from preproc.vocab import Vocab
-from preproc.batch import get_batches, GeneratorWithRestart, get_feed_dicts, get_feed_dicts_old
-from preproc.map import numpify, tokenize, notokenize, lower, deep_map, deep_seq_map, dynamic_subsample, jtr_map_to_targets
+from preproc.batch import get_feed_dicts
+from preproc.map import numpify, tokenize, lower, deep_map, deep_seq_map, jtr_map_to_targets
 import tensorflow as tf
 import numpy as np
 import json
 import os
 import dill as pickle
+import Levenshtein as lsn
 
 
-def dummy_data(sentences=None):
+def dummy_data():
+    """
+    :return: A dict containing a single example of data in the correct format, for testing purposes
+    """
     data = {"question": ["method for task (qa, xxxxx)", "what method is used for qa"], "candidates": [["lstm", "lda", "reasoning"], ["lstm", "lda", "reasoning"]],
             "support": [["in this paper we use an lstm for question answering", "lstm is a good method for qa"],["in this paper we use an lstm for question answering", "lstm is a good method for qa"]],
             "answers": ["lstm", "lstm"]}
@@ -16,16 +20,23 @@ def dummy_data(sentences=None):
 
 
 def full_data(file='data\\kbpLocal_train_pos.json'):
+    """
+    load data from specified .json file and return in correct dict format
+    :param file: path to a .json file containing the correct data
+    :return: data - dict with correct keys containing the loaded data (still in string form)
+    """
     with open(file, encoding='utf8') as data_file:
         data_dict = json.load(data_file)
     data = process_data_dict(data_dict)
-    #data = dummy_data()
-
     return data
 
 
 def combine_data(list_of_dicts):
-    # TODO - This is probably using a lot more memory than it needs to by making a full copy
+    """
+    Convert a list of dicts into a single dict
+    :param list_of_dicts: list of dicts to combine
+    :return: dict containing all data combined for each key
+    """
     if len(list_of_dicts) == 1:
         return list_of_dicts[0]
     else:
@@ -39,7 +50,11 @@ def combine_data(list_of_dicts):
 
 
 def process_data_dict(data_dict):
-    # TODO - this could probably be sped up
+    """
+    Converts the dict format obtained by loading the raw .json data files into the correct format
+    :param data_dict: Dict containing data just loaded from .json format
+    :return: data - dict containing the data in the correct format
+    """
     instances_list = data_dict['instances']
     data_list = []
     for instance in instances_list:
@@ -68,7 +83,18 @@ def process_data_dict(data_dict):
 
 def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=None, source='kbp', data_type='train',
               data_dir='data\\raw\\'):
-    #train_data = dummy_data()
+    """
+    Loads the specified data, preprocesses it and returns the vocab and feed dicts for that data
+    :param placeholders: Dict of tensorflow placeholders
+    :param batch_size: batch size for returned feed dicts
+    :param vocab: existing vocab to use or extend if required
+    :param extend_vocab: if passing an existing vocab, add new tokens to the vocab rather than treating them as OOV
+    :param file: path to a specific file to load if required
+    :param source: source of the data to load. Should be either kbp or cloze
+    :param data_type: type of data to load; train, dev or test
+    :param data_dir: parent directory of the data (assumed it contains sub folders for source and type e.g. raw\\kbp\\train)
+    :return: feed dicts and vocab of the loaded data
+    """
     if file is None:
         list_of_dicts = []
         path = data_dir + source + '\\' + data_type + '\\'
@@ -81,19 +107,22 @@ def load_data(placeholders, batch_size=1, vocab=None, extend_vocab=False, file=N
         data = full_data(file)
 
     data, vocab = prepare_data(data, vocab=vocab, extend_vocab=extend_vocab)
-    #train_feed_dicts = get_feed_dicts(data, placeholders, batch_size=batch_size, bucket_order=None,
-    #                                     bucket_structure=None)
-    # TODO - get_feed_dicts_old returns a GeneratorWithRestart object containing the data divided in to dicts containing
-    # each batch of data. These are padded individually as the padding size only needs to be the same within a batch,
-    # however as we want to iterate through and take any example for any batch the padding must be consistent over all
-    # the data. get_feed_dicts_old needs to be modified to at least produce batches with consistent padding
     data_np = numpify(data)
     feed_dicts = get_feed_dicts(data_np, placeholders, batch_size, len(data_np['answers']))
-    # feed_dicts = get_feed_dicts_old(data, placeholders, batch_size=batch_size, bucket_order=None, bucket_structure=None)
     return feed_dicts, vocab
 
 
 def load_data_dicts(vocab=None, extend_vocab=False, file=None, source='kbp', data_type='train', data_dir='data\\raw\\'):
+    """
+    Performs the same task as load_data but stops before the data is divided into feed dicts
+    :param vocab: existing vocab to use or extend if required
+    :param extend_vocab: if passing an existing vocab, add new tokens to the vocab rather than treating them as OOV
+    :param file: path to a specific file to load if required
+    :param source: source of the data to load. Should be either kbp or cloze
+    :param data_type: type of data to load; train, dev or test
+    :param data_dir: parent directory of the data (assumed it contains sub folders for source and type e.g. raw\\kbp\\train)
+    :return: dict of preprocessed data and vocab
+    """
     if file is None:
         list_of_dicts = []
         path = data_dir + source + '\\' + data_type + '\\'
@@ -111,6 +140,14 @@ def load_data_dicts(vocab=None, extend_vocab=False, file=None, source='kbp', dat
 
 
 def prepare_data(data, vocab=None, extend_vocab=False):
+    """
+    Takes a dict of data still in string form and performs preprocessing (tokenisation, conversion of tokens to token
+    IDs), and builds the vocab
+    :param data: dict containing data in string form
+    :param vocab: a prexisting vocab to use if required
+    :param extend_vocab: if passing an existing vocab, add new tokens to the vocab rather than treating them as OOV
+    :return:
+    """
     data_tokenized = deep_map(data, tokenize, ['question', 'support'])
     data_lower = deep_seq_map(data_tokenized, lower, ['question', 'support', 'answers', 'candidates'])
     data = deep_seq_map(data_lower, lambda xs: ["<SOS>"] + xs + ["<EOS>"], ["question", "support"])
@@ -134,6 +171,11 @@ def prepare_data(data, vocab=None, extend_vocab=False):
 
 
 def listify(data):
+    """
+    Converts a numpy array or nested list of numpy arrays into pure lists
+    :param data: possibly nested list of numpy arrays
+    :return: input in pure list form
+    """
     if type(data) is np.ndarray:
         data = data.tolist()
     elif type(data) is list:
@@ -143,18 +185,37 @@ def listify(data):
 
 
 def listify_dict(list_dict):
+    """
+    Runs the listify function for data under each key in a dict
+    :param list_dict:
+    :return: dict containing the same data but as pure lists
+    """
     for key in list_dict:
         listify(list_dict[key])
     return list_dict
 
 
 def extend_dict(data_dict, new_data_dict):
+    """
+    Combine dicts by combining the data under each key
+    :param data_dict: an existing dict to extend
+    :param new_data_dict: a dict (with the same format as data_dict) to extend data_dict with
+    :return: single extended dict containing data from both data_dict and new_data_dict
+    """
     for key in data_dict:
         data_dict[key].extend(new_data_dict[key])
     return data_dict
 
 
 def bicond_reader(placeholders, vocab_size, emb_dim, drop_keep_prob=1.0):
+    """
+    Builds the tensorflow graph for a bidirectional LSTM conditional reader for question answering
+    :param placeholders: dict containing tensorflow placeholders
+    :param vocab_size: size of the vocab of the data to be used with this model
+    :param emb_dim: word embedding dimension
+    :param drop_keep_prob: keep probability for dropout
+    :return: score (unscaled logits), loss and prediction (normalised logits (softmax)) tensorflow ops
+    """
     # [batch_size, max_seq1_length]
     question = placeholders['question']
 
@@ -209,13 +270,13 @@ def bicond_reader(placeholders, vocab_size, emb_dim, drop_keep_prob=1.0):
             outputs, states = reader(sup_batchi, sup_lens_batchi, emb_dim, seq1_states,
                                      scope=varscope2, drop_keep_prob=drop_keep_prob)
 
-        output = tf.concat(axis=1, values=[states[0][1], states[1][1]])
+        output = tf.concat(axis=1, values=[states[0][1], states[1][1]])  # [batch_size, 2*emb_dim]
 
         # squish back into emb_dim num dimensions
-        output = tf.contrib.layers.linear(output, emb_dim)
+        output = tf.contrib.layers.linear(output, emb_dim)  # [batch_size, emb_dim]
 
         # batch matrix multiplication to get per-candidate scores
-        scores = tf.einsum('bid,bcd->bc', tf.expand_dims(output, 1), candidates_embedded)
+        scores = tf.einsum('bid,bcd->bc', tf.expand_dims(output, 1), candidates_embedded)  # [batch_size, 1, emb_dim], [batch_size, max_num_cands, emb_dim] -> [batch_size, max_num_cands]
 
         # append scores for the i-th support to previous supports so we can combine scores for all supports later
         outputs_ = outputs_.write(i, scores)
@@ -237,6 +298,15 @@ def bicond_reader(placeholders, vocab_size, emb_dim, drop_keep_prob=1.0):
 
 
 def bicond_reader_embedded(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
+    """
+    Performs the same function as the bicond_reader function but works on inputs that have already been embedded by the
+    embedding lookup op
+    :param placeholders: dict containing tensorflow placeholders
+    :param inputs_embedded: Inputs to the reader after already having passed through the embedding lookup ops
+    :param emb_dim: word embedding dimension
+    :param drop_keep_prob: keep probability for dropout
+    :return: score (unscaled logits), loss and prediction (normalised logits (softmax)) tensorflow ops
+    """
     # [batch_size, candidate_size]
     targets = tf.to_float(placeholders['targets'])
 
@@ -304,6 +374,14 @@ def bicond_reader_embedded(placeholders, inputs_embedded, emb_dim, drop_keep_pro
 
 
 def question_reader(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
+    """
+    Bi-directional LSTM reader that works on pre embedded inputs. Returns a 2d output for either 'accept' or 'reject'
+    :param placeholders: dict containing tensorflow placeholders
+    :param inputs_embedded: Inputs to the reader after already having passed through the embedding lookup ops
+    :param emb_dim: word embedding dimension
+    :param drop_keep_prob: keep probability for dropout
+    :return: unscaled score, selection (1 or 0 for accept or reject) and normalised prediction tensorflow ops
+    """
     question_embedded = inputs_embedded['question_embedded']
 
     with tf.variable_scope('question_reader') as scope:
@@ -317,14 +395,13 @@ def question_reader(placeholders, inputs_embedded, emb_dim, drop_keep_prob=1.0):
     output = tf.concat([output_fw, output_bw], 1)  # [batch_size, 2*emb_dim]
 
     # Linear layer to transform from 2*emb_dim to 2 (select or not select)
-    scores = tf.layers.dense(output, 2)  # [batch_size, 2] TODO - need an activation here or just affine transform?
+    scores = tf.layers.dense(output, 2)  # [batch_size, 2]
 
     # Get selection
     selection = tf.argmax(scores, axis=1)  # [batch_size, 1]
 
     predict = tf.nn.softmax(scores)
 
-    # TODO - what should this return? - definitely selection. loss?, logits?
     return scores, selection, predict
 
 
@@ -378,10 +455,20 @@ def reader(inputs, lengths, output_size, contexts=(None, None), scope=None, drop
 
 
 def _bytes_feature(value):
+    """
+    Returns some data, value, as a tensorflow bytes feature for writing to TFRecords files
+    :param value: some data element
+    :return: tensorflow bytes feature
+    """
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
 def write_to_tfrecords(feed_dict_list, filename):
+    """
+    Writes data in a list of feed dicts to a TFRecords file, filename
+    :param feed_dict_list: list of data feed dicts (batch size 1)
+    :param filename: filename (with path if not saving to current directory) (without .tfrecords extension) to save as
+    """
     # Append filename extension
     filename = filename + '.tfrecords'
 
@@ -407,18 +494,37 @@ def write_to_tfrecords(feed_dict_list, filename):
 
 
 def write_to_tfrecords_in_chunks(feed_dict_list, base_filename, examples_per_file):
+    """
+    Takes a list of feed dicts and splits it up into chunks and then saves each chunk as a separate TFRecords file
+    :param feed_dict_list: list of data feed dicts (batch size 1)
+    :param base_filename: filename (with path if not saving to current directory) (without .tfrecords extension) to
+                          save as (numbers will be appended to the filename to make each filename unique)
+    :param examples_per_file: number of examples to save to each TFRecords file
+    """
     filename_counter = 0
     for examples in chunker(feed_dict_list, examples_per_file):
-        filename = base_filename + str(filename_counter)
+        filename = base_filename + '_' + str(filename_counter)
         write_to_tfrecords(examples, filename)
         filename_counter += 1
 
 
 def chunker(seq, size):
+    """
+    Splits a list into chunks for iterating over
+    :param seq: list of data
+    :param size: size of chunks to divide seq into
+    :return: a generator that returns each chunk when iterating over
+    """
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 def get_sizes_dict(dict_list):
+    """
+    Get the size of the arrays under each key in a list of dicts of the same format, padded to the same size, and return
+    as dict
+    :param dict_list: list of dicts containing padded data
+    :return: dict of sizes
+    """
     data_dict = dict_list[0]
 
     sizes_dict = {}
@@ -429,6 +535,12 @@ def get_sizes_dict(dict_list):
 
 
 def pad_list_of_dicts(list_of_dicts, dict_of_shapes):
+    """
+    Pad a list of dicts with zeros
+    :param list_of_dicts: list of batch dicts
+    :param dict_of_shapes: dict containing shapes to pad to
+    :return: padded list of dicts
+    """
     for example_dict in list_of_dicts:
         for key in example_dict.keys():
             # Pad to shape
@@ -441,6 +553,11 @@ def pad_list_of_dicts(list_of_dicts, dict_of_shapes):
 
 
 def get_max_sizes_dict(sizes_list):
+    """
+    For a list of sizes dict return a dict of max sizes in each dimension for each dict key
+    :param sizes_list: list of sizes dicts
+    :return: dict of max sizes
+    """
     max_sizes_dict = {}
     for key in sizes_list[0].keys():
         # Create list of sizes for key
@@ -452,23 +569,32 @@ def get_max_sizes_dict(sizes_list):
 
 
 def save_obj(obj, name):
+    """
+    Save an object as a .pkl file
+    :param obj: Some object to save
+    :param name: Filename (including path if required) to save as
+    """
     with open(name + '.pkl', 'wb') as f:
         pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
 
 
 def load_obj(name):
+    """
+    Load a previously saved object
+    :param name: Filename (including path if required) to load from
+    """
     with open(name + '.pkl', 'rb') as f:
         return pickle.load(f)
 
 
-def build_tfrecord_dataset(in_path='data\\raw\\' , out_path='data\\tfrecords\\', examples_per_file=1024):
+def build_tfrecord_dataset(in_path='data\\raw\\', out_path='data\\tfrecords\\', examples_per_file=1024):
     """
-    Needs to take some pointer to a set of files in json format and load, pre-process and re-save as a set of tfrecord files
-    Must also save a file containing the feature shapes and vocab object
-    :return:
+    Converts a raw data set in .json format to a preprocessed data set in .tfrecords format. Assumes a directory
+    structure in the in_path of data source (kbp or cloze) then data type (train, dev or test)
+    e.g. in_path/kbp/train should contain all the kbp train examples in .json files.
+    Saves to the same directory structure in out_path and also saves vocab and shapes as a .pkl file.
+    Splits the tfrecords files to only contain a maximum of examples_per_file examples per file.
     """
-    # TODO - must load cloze and kbp at same time (so that they share padding size?) and so that vocab can be created and saved correctly
-    # TODO - split records files so that no single file is too large? (not sure if necessary or not)
     # Create placeholders
     placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="question"),
                     "question_lengths": tf.placeholder(tf.int32, [None], name="question_lengths"),
@@ -504,9 +630,6 @@ def build_tfrecord_dataset(in_path='data\\raw\\' , out_path='data\\tfrecords\\',
     # Save kbp training data as tfrecords
     write_to_tfrecords_in_chunks(kbp_train_data, out_path + 'kbp\\train\\train_kbp', examples_per_file)
 
-    # Add KBP sizes to sizes list
-    sizes_list.append(get_sizes_dict(kbp_train_data))
-
     # Delete KBP training data from memory
     kbp_train_data = None
 
@@ -518,9 +641,6 @@ def build_tfrecord_dataset(in_path='data\\raw\\' , out_path='data\\tfrecords\\',
 
     # Save cloze training data as tfrecords
     write_to_tfrecords_in_chunks(cloze_train_data, out_path + 'cloze\\train\\train_cloze', examples_per_file)
-
-    # Add Cloze sizes to sizes list
-    sizes_list.append(get_sizes_dict(cloze_train_data))
 
     # Delete cloze training data from memory
     cloze_train_data = None
@@ -549,7 +669,105 @@ def build_tfrecord_dataset(in_path='data\\raw\\' , out_path='data\\tfrecords\\',
     save_obj(shapes_vocab, out_path + 'shapes_vocab')
 
 
+def build_categorised_tfrecords_dataset(in_path='data\\raw\\', out_path='data\\tfrecords\\', examples_per_file=1024):
+    """
+    Works in the same way as the build_tfrecords_dataset function but for the cloze train data it saves separate
+    clusters in their own folder for use with the cluster based sampler. Clusters are computed at this stage rather than
+    at runtime of the model
+    """
+    # Create placeholders
+    placeholders = {"question": tf.placeholder(tf.int32, [None, None], name="question"),
+                    "question_lengths": tf.placeholder(tf.int32, [None], name="question_lengths"),
+                    "candidates": tf.placeholder(tf.int32, [None, None], name="candidates"),
+                    "support": tf.placeholder(tf.int32, [None, None, None], name="support"),
+                    "support_lengths": tf.placeholder(tf.int32, [None, None], name="support_lengths"),
+                    "answers": tf.placeholder(tf.int32, [None], name="answers"),
+                    "targets": tf.placeholder(tf.int32, [None, None], name="targets")}
+
+    sizes_list = []
+
+    # Get sizes (this step will take a while)
+    for source in ['kbp', 'cloze']:
+        for data_type in ['train', 'dev', 'test']:
+            # Load
+            data, _ = load_data(placeholders, 1, source=source, data_type=data_type,
+                                data_dir=in_path)
+
+            # Add Cloze sizes to sizes list
+            sizes_list.append(get_sizes_dict(data))
+
+    data = None
+
+    # Get max of sizes
+    shapes = get_max_sizes_dict(sizes_list)
+
+    # First load training data and build vocab  TODO - if wanting to use levenshtein distance then will have to make deeper modifications to the loading function here
+    kbp_train_data, kbp_vocab = load_data(placeholders, 1, source='kbp', data_type='train', data_dir=in_path)
+
+    cloze_train_data, vocab = load_data(placeholders, 1, vocab=kbp_vocab, extend_vocab=True, source='cloze',
+                                        data_type='train',
+                                        data_dir=in_path)  # TODO - appears to not load the whole of the data (loads the same amount as for kbp so maybe reaching a limit for that as well?), maybe try splitting jsons before hand
+
+    # COMPUTE DIFFERENT CLOZE GROUPS (GET INDICES AND THEN USE INDICES TO ADD TO)
+    group_indices = [[], [], []]
+
+    # These are redundant assignments but allow the comments on what each group is
+    group_indices[0] = []  # Cloze question shorter than 30 tokens
+    group_indices[1] = []  # Cloze question shorter than 20 tokens
+    group_indices[2] = []  # Not in any other group
+
+    n_groups = 3
+
+    # Build list of KBP answers
+    kbp_answers = []
+    for example in kbp_train_data:
+        kbp_answers.append(example[placeholders['answers']][0])
+
+    for i, cloze_example in enumerate(cloze_train_data):
+        # Decide whether to add to group 0
+        question = cloze_example[placeholders['question']][0]
+        if check_contains_less_than_n_tokens(question, 30):
+            group_indices[0].append(i)
+
+        # Decide whether to add to group 1
+        if check_contains_less_than_n_tokens(question, 20):
+            group_indices[1].append(i)
+
+
+    group_indices[-1] = list(set(range(len(cloze_train_data))) - set(group_indices[0]) - set(group_indices[1]))
+
+    for i in range(n_groups):
+        cloze_train_data_group = [cloze_train_data[x] for x in group_indices[i]]
+
+        # Pad data
+        cloze_train_data_group = pad_list_of_dicts(cloze_train_data_group, shapes)
+
+        # Save cloze training data as tfrecords
+        # Create folder if required
+        directory = out_path + 'cloze\\train\\group_' + str(i)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        # Write
+        write_to_tfrecords_in_chunks(cloze_train_data_group, directory + '\\train_cloze_group_' + str(i), examples_per_file)
+
+    # Delete KBP training data from memory
+    kbp_train_data = None
+
+    # Delete cloze training data from memory
+    cloze_train_data = None
+
+    # Delete
+    data = None
+
+
 def create_dict_of_filename_lists(data_dir):
+    """
+    For a given directory form a dict of dicts/lists containing all subdirectories as keys and filenames in sub
+    directories as lists
+    :param data_dir: directory to form dict of filename lists
+    :return: dict of filename lists
+    """
     # Get folder names in data_dir to use as dict keys
     sub_dirs = [name for name in os.listdir(data_dir) if os.path.isdir(data_dir + name)]
 
@@ -559,6 +777,8 @@ def create_dict_of_filename_lists(data_dir):
     # Fill dict with lists of filenames (or dicts if more folders)
     if sub_dirs:
         dict_of_filename_lists = {}
+        if tfrecords_filenames:
+            dict_of_filename_lists['files'] = tfrecords_filenames
         for sub_dir in sub_dirs:
             dict_of_filename_lists[sub_dir] = create_dict_of_filename_lists(data_dir + sub_dir + '/')
     else:
@@ -568,12 +788,130 @@ def create_dict_of_filename_lists(data_dir):
 
 
 def stack_array_lists_in_dict(dict_of_lists):
+    """
+    For a dict of lists of arrays (of compatible size), stack all the arrays to form a dict of arrays
+    :param dict_of_lists: dict of lists of arrays
+    :return: dict of arrays
+    """
     for key in dict_of_lists.keys():
         if dict_of_lists[key][0].shape is not ():
             dict_of_lists[key] = np.stack(dict_of_lists[key])
         else:
             dict_of_lists[key] = np.array(dict_of_lists[key])
     return dict_of_lists
+
+
+def vector_to_distribution(vector):
+    """
+    Take a vector, clamp negative values to zero and then normalise such that it represents a multinomial distribution
+    :param vector: some vector (list or array)
+    :return: distrubution with same shape as vector
+    """
+    distribution = vector
+    distribution[distribution < 0] = 0
+    distribution = distribution / np.sum(distribution)
+
+    return distribution
+
+
+def check_contains_less_than_n_not_in_vocab(q_or_s, n, vocab):
+    """
+    For a given Cloze question or support in preprocessed form, check if it contains less than n tokens not contained in
+    the vocab
+    :param q_or_s: question or support in preprocessed form
+    :param n: number
+    :param vocab: vocab object
+    :return: check - logical
+    """
+    x = q_or_s
+
+    tokens = set(x.flatten())
+    vocab_tokens = set(range(vocab.next_pos))
+
+    check = len(tokens - vocab_tokens) < n
+
+    return check
+
+
+def check_contains_n_tokens_from_kbp_question(question, n, kbp_train_data, placeholders):
+    """
+    For a given Cloze question in preprocessed form, check whether it contains at least n tokens that appear in any
+    single kbp question
+    :param question: Cloze question in preprocessed form
+    :param n: number
+    :param kbp_train_data: full kbp train data set in preprocessed form
+    :param placeholders: dict of tensorflow placeholders
+    :return: check - logical
+    """
+    check = False
+    # Loop through kbp train data
+    for kbp_example in kbp_train_data:
+        kbp_question = kbp_example[placeholders['question']][0]
+        if len(set(question).intersection(kbp_question)) >= n:
+            check = True
+            break
+
+    return check
+
+
+def check_contains_less_than_n_tokens(token_indices, n):
+    """
+    For some sequence of tokens (represented as indices) check that there are less than n unique tokens present
+    :param token_indices: sequence of token indices (to reference vocab)
+    :param n: number
+    :return: check - logical
+    """
+    # Get number of tokens
+    n_tokens = len(token_indices[token_indices != 0])
+
+    # Check
+    check = n_tokens < n
+
+    return check
+
+
+def compute_mean_levenshtein_distance(support, kbp_data, vocab, placeholders):
+    """
+    Compute mean levenshtein distance between a Cloze support example and all KBP supports
+    :param support: Cloze support in preprocessed form
+    :param kbp_data: full KBP data set in preprocessed form
+    :param vocab: vocab object
+    :param placeholders: dict of tensorflow placeholders
+    :return: mean distance
+    """
+    distance_list = []
+    for kbp_example in kbp_data:
+        kbp_support = kbp_example[placeholders['support']]
+        for kbp_support_example in [x for x in list(kbp_support) if x[0] is not 0]:
+            # Convert to strings
+            cloze_string = reconstruct_string_from_indices(support, vocab)
+            kbp_string = reconstruct_string_from_indices(kbp_support_example, vocab)
+
+            # Compute distance
+            dist = lsn.distance(cloze_string, kbp_string)
+
+            # Append to list
+            distance_list.append(dist)
+
+    # Compute mean
+    mean_dist = np.mean(distance_list)
+    return mean_dist
+
+
+def reconstruct_string_from_indices(indices, vocab):
+    """
+    For a given sequence of word indices, reconstruct the original string using vocab
+    :param indices: sequence of word indices
+    :param vocab: vocab object
+    :return: reconstructed string
+    """
+    reconstructed_string = ''
+    for word_id in indices[:-1]:
+        reconstructed_string += vocab.id2sym[word_id] + ' '
+
+    reconstructed_string += vocab.id2sym[indices[-1]]
+
+    return reconstructed_string
 
 
 if __name__ is '__main__':
