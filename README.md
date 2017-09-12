@@ -9,7 +9,8 @@ Models can be trained or tested by running main.py with the appropriate command 
 
 There are four different model classes: 
 
-BasicModel - defined in basic_model.py, which uses only the KBP data to train the QA model; i.e. no generative regularisation.
+BasicModel - defined in basic_model.py, which uses no generative regularisation (although some mixture of KBP and Cloze data may still be
+used by varying the generative regularisation strength (lambda) parameter).
 
 ReinforceModelBlackBox - defined in reinforce_model_black_box.py, which uses the cluster based sampler for generative regularisation with the Cloze data.
 
