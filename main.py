@@ -68,7 +68,7 @@ def main(_):
     config['clip'] = None  # Defined here as it may need to be a list
 
     if config['fullsearch']:
-        print('Hyperparameter search not implemented yet')
+        print('Test')
     else:
         model = make_model(config)
 
